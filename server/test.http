@@ -1,0 +1,50 @@
+### 1. 注册接口（公开）
+POST http://localhost:8080/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "phone": "13800138000",
+  "password": "hashed_password"
+}
+
+### 2. 登录接口 - 获取普通用户 Token
+POST http://localhost:8080/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "account": "13800138000",
+  "password": "hashed_password"
+}
+
+### 3. 未登录访问受保护接口（预期返回 401）
+GET http://localhost:8080/api/v1/user/profile
+
+### 4. 携带用户 Token 获取个人资料（预期返回 200）
+GET http://localhost:8080/api/v1/user/profile
+Authorization: Bearer mock_user_token_abc123
+
+### 5. 普通用户充值接口（预期返回 200）
+POST http://localhost:8080/api/v1/user/wallet/recharge
+Authorization: Bearer mock_user_token_abc123
+Content-Type: application/json
+
+{
+  "amount": 100.0
+}
+
+### 6. 普通用户尝试访问管理端接口（越权测试，预期返回 403）
+GET http://localhost:8080/api/v1/admin/users
+Authorization: Bearer mock_user_token_abc123
+
+### 7. 登录接口 - 获取管理员 Token
+POST http://localhost:8080/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "account": "admin",
+  "password": "admin_password"
+}
+
+### 8. 管理员访问管理端用户列表（预期返回 200）
+GET http://localhost:8080/api/v1/admin/users
+Authorization: Bearer mock_admin_token_xyz888
