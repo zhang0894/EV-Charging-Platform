@@ -13,9 +13,7 @@ namespace beast = boost::beast;
 namespace http = beast::http;
 using tcp = net::ip::tcp;
 
-// ==========================================
-// 1. C++23 零开销错误模型与鉴权上下文
-// ==========================================
+// 错误模型与鉴权上下文
 enum class AuthError {
     MissingHeader,
     InvalidFormat,
@@ -35,7 +33,7 @@ int64_t current_timestamp_ms() {
     ).count();
 }
 
-// 模拟 JWT / Bearer Token 验证 (C++23 std::expected)
+// 模拟 JWT / Bearer Token 验证
 std::expected<AuthContext, AuthError> authenticate(
     std::string_view auth_header, 
     std::string_view required_role = ""
@@ -72,9 +70,8 @@ std::expected<AuthContext, AuthError> authenticate(
     return ctx;
 }
 
-// ==========================================
-// 2. HTTP 响应辅助函数
-// ==========================================
+
+// HTTP 响应辅助函数
 http::response<http::string_body> make_json_response(
     http::status status, 
     std::string_view body, 
@@ -90,9 +87,7 @@ http::response<http::string_body> make_json_response(
     return res;
 }
 
-// ==========================================
-// 3. 业务路由分发（用户与管理员认证模块）
-// ==========================================
+// 业务路由分发（用户与管理员认证模块）
 http::response<http::string_body> route_request(
     const http::request<http::string_body>& req
 ) {
@@ -204,9 +199,7 @@ http::response<http::string_body> route_request(
         R"({"code":404,"msg":"Endpoint not found"})", version, keep_alive);
 }
 
-// ==========================================
-// 4. Boost.Asio 协程连接与监听处理
-// ==========================================
+// Boost.Asio 协程连接与监听处理
 net::awaitable<void> handle_session(tcp::socket socket) {
     beast::tcp_stream stream(std::move(socket));
     beast::flat_buffer buffer;
@@ -257,9 +250,7 @@ net::awaitable<void> listener(tcp::endpoint endpoint) {
     }
 }
 
-// ==========================================
-// 5. 主程序入口
-// ==========================================
+// 主程序入口
 int main() {
     try {
         const auto address = net::ip::make_address("0.0.0.0");
@@ -270,7 +261,7 @@ int main() {
         // 注册系统信号中断处理（Ctrl + C）
         net::signal_set signals(ioc, SIGINT, SIGTERM);
         signals.async_wait([&](auto, auto) {
-            std::cout << "\n[Server] Shutting down gracefully...\n";
+            std::cout << "\n[Server] Shutting down...\n";
             ioc.stop();
         });
 
