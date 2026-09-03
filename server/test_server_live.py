@@ -173,10 +173,10 @@ class ServerTester:
                 self.log_fail("钱包充值失败", f"Status={status}, Resp={res}")
 
             # 查询流水
-            status, res = self.http_request("GET", "/api/v1/wallet/transactions?page=1&page_size=5", token=user_token)
+            status, res = self.http_request("GET", "/api/v1/user/wallet/transactions?page=1&page_size=5", token=user_token)
             if status == 200 and res.get("code") == 0:
                 txs = res.get("data", {}).get("records", [])
-                self.log_pass("查询钱包流水记录 (/api/v1/wallet/transactions)", f"流水记录数={len(txs)}")
+                self.log_pass("查询钱包流水记录 (/api/v1/user/wallet/transactions)", f"流水记录数={len(txs)}")
             else:
                 self.log_fail("查询钱包流水失败", f"Status={status}, Resp={res}")
 
@@ -225,6 +225,13 @@ class ServerTester:
             if status == 200 and res.get("code") == 0:
                 orders = res.get("data", {}).get("orders", [])
                 self.log_pass("查询用户个人历史订单 (/api/v1/orders/my)", f"订单列表数={len(orders)}")
+                if orders:
+                    sample_oid = orders[0].get("order_id")
+                    st_d, res_d = self.http_request("GET", f"/api/v1/charging/orders/{sample_oid}", token=user_token)
+                    if st_d == 200 and res_d.get("code") == 0:
+                        self.log_pass(f"查询指定订单详情 (/api/v1/charging/orders/{sample_oid})", f"实收总金额={res_d.get('data', {}).get('total_fee')}元")
+                    else:
+                        self.log_fail("查询订单详情失败", f"Status={st_d}, Resp={res_d}")
             else:
                 self.log_fail("查询个人订单失败", f"Status={status}, Resp={res}")
 

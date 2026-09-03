@@ -92,7 +92,7 @@ int main() {
     std::println("  [PASS] 钱包充值 200 元成功");
 
     // 查询流水
-    auto tx_req = make_req(http::verb::get, "/api/v1/wallet/transactions?page=1&page_size=10", "", user_token);
+    auto tx_req = make_req(http::verb::get, "/api/v1/user/wallet/transactions?page=1&page_size=10", "", user_token);
     auto tx_resp = router.dispatch(tx_req);
     assert(tx_resp.result() == http::status::ok);
     std::println("  [PASS] 查询钱包流水明细成功");
@@ -159,6 +159,12 @@ int main() {
     auto my_orders_resp = router.dispatch(my_orders_req);
     assert(my_orders_resp.result() == http::status::ok);
     std::println("  [PASS] 查询用户历史订单成功");
+
+    // 查询指定订单详情 (/api/v1/charging/orders/{order_id})
+    auto order_detail_req = make_req(http::verb::get, std::format("/api/v1/charging/orders/{}", order_id), "", user_token);
+    auto order_detail_resp = router.dispatch(order_detail_req);
+    assert(order_detail_resp.result() == http::status::ok);
+    std::println("  [PASS] 查询订单详情成功 (/api/v1/charging/orders/{})", order_id);
 
     // 6. 测试管理端全功能 (登录 -> 看板 -> 单站销售统计 -> 桩管理 -> 用户风控 -> 一键退款)
     std::println("\n>>> 6. 测试管理端全功能业务 (/api/v1/admin/*)...");

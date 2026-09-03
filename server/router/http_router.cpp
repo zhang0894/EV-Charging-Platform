@@ -121,7 +121,7 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
         if (path == "/api/v1/wallet/recharge" && method == http::verb::post) {
             return UserController::handle_recharge(uid, req);
         }
-        if (path == "/api/v1/wallet/transactions" && method == http::verb::get) {
+        if (path == "/api/v1/user/wallet/transactions" && method == http::verb::get) {
             int page = query.contains("page") ? std::stoi(query["page"]) : 1;
             int page_size = query.contains("page_size") ? std::stoi(query["page_size"]) : 20;
             int flow_type = query.contains("flow_type") ? std::stoi(query["flow_type"]) : 0;
@@ -151,8 +151,8 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
             return ChargingController::handle_get_my_orders(uid, page, page_size, st, sort);
         }
 
-        // 订单详情: /api/v1/orders/{order_id}
-        std::regex order_detail_regex(R"(^/api/v1/orders/([^/]+)$)");
+        // 订单详情: /api/v1/charging/orders/{order_id}
+        std::regex order_detail_regex(R"(^/api/v1/charging/orders/([^/]+)$)");
         if (method == http::verb::get && std::regex_match(path_str.c_str(), match, order_detail_regex)) {
             std::string oid = match[1].str();
             return ChargingController::handle_get_order_detail(uid, oid);
