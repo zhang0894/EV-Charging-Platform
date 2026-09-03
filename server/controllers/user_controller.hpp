@@ -57,6 +57,34 @@ public:
         return make_empty_success_response();
     }
 
+    static http::response<http::string_body> handle_change_password(int64_t user_id, const http::request<http::string_body>& req) {
+        ChangePasswordRequest cp_req;
+        auto err = glz::read_json(cp_req, req.body());
+        if (err || cp_req.new_password.empty()) {
+            return make_error_response(AppError::InvalidJsonPayload, "Missing old_password or new_password");
+        }
+
+        auto u_res = DbRepository::instance().get_user_by_id(user_id);
+        if (!u_res) {
+            return make_error_response(u_res.error());
+        }
+
+        if (u_res->status == 2) {
+            return make_error_response(AppError::UserAccountFrozen);
+        }
+
+        if (!u_res->password_hash.empty() && u_res->password_hash != cp_req.old_password) {
+            return make_error_response(AppError::InvalidCredentials, "Incorrect old password");
+        }
+
+        auto upd = DbRepository::instance().update_user_password(user_id, cp_req.new_password);
+        if (!upd) {
+            return make_error_response(upd.error());
+        }
+
+        return make_empty_success_response();
+    }
+
     static http::response<http::string_body> handle_upload_avatar(int64_t user_id, const http::request<http::string_body>& req) {
         UploadAvatarRequest a_req;
         auto err = glz::read_json(a_req, req.body());

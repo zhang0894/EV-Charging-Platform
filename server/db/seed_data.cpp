@@ -210,4 +210,20 @@ bool SeedDataGenerator::populate_if_empty() {
     return true;
 }
 
+bool SeedDataGenerator::clear_database() {
+    auto conn = DbPool::instance().acquire();
+    if (!conn) {
+        std::cerr << "[Seed Error] Cannot acquire connection from DbPool to clear database\n";
+        return false;
+    }
+    std::cout << "[Seed] Truncating all business tables...\n";
+    PgResultGuard res(conn->exec("TRUNCATE TABLE charging_orders, wallet_transaction_flows, piles, user_wallets, stations, users RESTART IDENTITY CASCADE;"));
+    if (!res.is_ok()) {
+        std::cerr << "[Seed Error] Failed to truncate tables: " << conn->last_error() << "\n";
+        return false;
+    }
+    std::cout << "[Seed] Successfully truncated all tables.\n";
+    return true;
+}
+
 } // namespace ev

@@ -28,6 +28,7 @@ public:
     std::optional<std::string> get(std::string_view key);
     bool del(std::string_view key);
     void del_prefix(std::string_view prefix);
+    bool flush_all();
 
     // 模板对象与 Glaze JSON 自动化存取
     template <typename T>

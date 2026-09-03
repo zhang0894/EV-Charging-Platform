@@ -6,11 +6,13 @@
 #include "memory/state_pool.hpp"
 #include "simulation/simulator.hpp"
 #include "cache/redis_cache.hpp"
+#include "db/async_flow_persister.hpp"
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/signal_set.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/strand.hpp>
 #include <iostream>
 #include <print>
 #include <thread>
@@ -19,11 +21,11 @@ namespace net = boost::asio;
 using tcp = boost::asio::ip::tcp;
 
 net::awaitable<void> listener(tcp::acceptor& acceptor) {
+    auto executor = acceptor.get_executor();
     for (;;) {
         tcp::socket socket = co_await acceptor.async_accept(net::use_awaitable);
-        auto executor = socket.get_executor();
         net::co_spawn(
-            executor,
+            net::make_strand(executor),
             ev::handle_session(std::move(socket)),
             net::detached
         );
@@ -50,8 +52,30 @@ int main(int argc, char* argv[]) {
     std::println(">>> 2. 正在初始化 Redis 实时/TTL 缓存组件...");
     ev::RedisCache::instance().init("127.0.0.1", 6379);
 
-    // 3. 自动检查并预置初始数据
-    std::println(">>> 3. 正在检查并装载数据...");
+    // 3. 询问是否需要清空数据库与缓存并重新初始化
+    bool skip_prompt = (std::getenv("NO_PROMPT") != nullptr && std::string_view(std::getenv("NO_PROMPT")) == "1");
+    if (!skip_prompt) {
+        std::print("\n[交互提示] 是否需要清空现有数据库与缓存并重新初始化? (y/N): ");
+        std::string choice;
+        if (std::getline(std::cin, choice)) {
+            while (!choice.empty() && std::isspace(static_cast<unsigned char>(choice.front()))) choice.erase(choice.begin());
+            while (!choice.empty() && std::isspace(static_cast<unsigned char>(choice.back()))) choice.pop_back();
+
+            if (choice == "y" || choice == "Y" || choice == "yes" || choice == "YES") {
+                std::println(">>> 正在清空数据库所有业务表与 Redis 缓存...");
+                ev::SeedDataGenerator::clear_database();
+                ev::RedisCache::instance().flush_all();
+                std::println(">>> [OK] 数据库与缓存已清空，准备重新初始化。\n");
+            } else {
+                std::println(">>> 保持现有数据库内容不变。\n");
+            }
+        }
+    } else {
+        std::println(">>> [NO_PROMPT] 自动化/非交互模式，保持现有数据库内容不变。");
+    }
+
+    // 4. 自动检查并预置初始数据
+    std::println(">>> 正在检查并装载数据...");
     ev::SeedDataGenerator::populate_if_empty();
 
     // 4. 构建 R-Tree 空间索引与电桩状态内存池
@@ -60,21 +84,17 @@ int main(int argc, char* argv[]) {
     auto all_piles = ev::DbRepository::instance().get_all_piles();
 
     if (all_stations && all_piles) {
-        std::vector<std::pair<int64_t, std::pair<double, double>>> coords;
-        coords.reserve(all_stations->size());
-        for (const auto& s : *all_stations) {
-            coords.emplace_back(s.station_id, std::make_pair(s.latitude, s.longitude));
-        }
         ev::ChargingStatePool::instance().init_from_piles(*all_piles);
-        ev::StationRTree::instance().build_index(coords);
-        std::println("  [OK] 成功构建 {} 个充电站 R-Tree 空间索引与 {} 个电桩状态池", coords.size(), all_piles->size());
+        ev::StationRTree::instance().build_index(*all_stations);
+        std::println("  [OK] 成功构建 {} 个充电站 R-Tree 空间索引与 {} 个电桩状态池", all_stations->size(), all_piles->size());
     }
 
     try {
-        // 4. 初始化 Asio 网络与协程事件循环 (Core 0)
-        net::io_context ioc(1);
+        // 4. 初始化 Asio 网络与协程事件循环 (多线程并发驱动: 2 线程协同)
+        int const threads = 2;
+        net::io_context ioc{threads};
 
-        // 5. 启动动态充电模拟引擎 (Core 1 / 独立调度)
+        // 5. 启动动态充电模拟引擎
         std::println(">>> 4. 启动充电桩动态模拟与占位费引擎 (500ms 刷新周期)...");
         ev::ChargingSimulator::instance().start(ioc, 500);
 
@@ -82,7 +102,7 @@ int main(int argc, char* argv[]) {
         auto const address = net::ip::make_address(host);
         tcp::acceptor acceptor{ioc, {address, port}};
 
-        std::println("\n🚀 服务端启动就绪，监听于: http://{}:{}", host, port);
+        std::println("\n🚀 服务端启动就绪 [多线程事件循环架构 (Scheme A)]，监听于: http://{}:{}", host, port);
         std::println("📡 WebSocket 实时流通道:");
         std::println("   - 充电遥测流: ws://{}:{}/ws/v1/charging/<order_id>", host, port);
         std::println("   - 导航监控流: ws://{}:{}/ws/v1/stations/<station_id>/monitor", host, port);
@@ -94,6 +114,7 @@ int main(int argc, char* argv[]) {
             std::println("\n[Server] 接收到退出信号，正在安全关闭服务端...");
             ev::ChargingSimulator::instance().stop();
             acceptor.close();
+            ev::AsyncFlowPersister::instance().shutdown();
             ev::DbPool::instance().shutdown();
             ioc.stop();
         });
@@ -101,7 +122,19 @@ int main(int argc, char* argv[]) {
         // 8. 启动网络协程接收器
         net::co_spawn(ioc, listener(acceptor), net::detached);
 
+        std::vector<std::thread> thread_pool;
+        thread_pool.reserve(threads - 1);
+        for (int i = 0; i < threads - 1; ++i) {
+            thread_pool.emplace_back([&ioc] {
+                ioc.run();
+            });
+        }
         ioc.run();
+
+        for (auto& t : thread_pool) {
+            if (t.joinable()) t.join();
+        }
+        ev::AsyncFlowPersister::instance().shutdown();
     } catch (const std::exception& e) {
         std::cerr << "[Server Fatal Error] " << e.what() << "\n";
         return 1;

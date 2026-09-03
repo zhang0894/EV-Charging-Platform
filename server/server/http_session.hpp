@@ -47,7 +47,7 @@ inline net::awaitable<void> handle_session(tcp::socket socket) {
                 break;
             }
 
-            // HTTP RESTful 请求分发
+            // Scheme A: 高性能多线程协程分发 (直接在 Session Strand 上运行)
             auto res = HttpRouter::instance().dispatch(req);
             bool keep_alive = res.keep_alive();
 

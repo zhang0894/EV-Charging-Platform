@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <shared_mutex>
 #include <optional>
 #include <algorithm>
@@ -69,6 +70,7 @@ public:
         std::unique_lock<std::shared_mutex> lock(mutex_);
         piles_.clear();
         piles_.reserve(piles.size());
+        active_charging_pile_ids_.clear();
 
         for (const auto& p : piles) {
             piles_[p.pile_id] = PileRuntimeState{
@@ -86,6 +88,9 @@ public:
                 .charged_energy_kwh = 0.0,
                 .last_update_time = current_time_ms()
             };
+            if (p.status == "CHARGING") {
+                active_charging_pile_ids_.insert(p.pile_id);
+            }
         }
     }
 
@@ -152,6 +157,7 @@ public:
 
         int64_t now = current_time_ms();
         p.status = "CHARGING";
+        active_charging_pile_ids_.insert(std::string(pile_id));
         p.active_order_id = std::string(order_id);
         p.user_id = user_id;
         p.start_time = now;
@@ -185,6 +191,7 @@ public:
 
         auto& p = it->second;
         p.status = "IDLE";
+        active_charging_pile_ids_.erase(std::string(pile_id));
         p.voltage_v = 0.0;
         p.current_a = 0.0;
         p.power_kw = 0.0;
@@ -199,7 +206,10 @@ public:
         if (it != piles_.end()) {
             it->second.status = std::string(status);
             it->second.last_update_time = current_time_ms();
-            if (status != "CHARGING") {
+            if (status == "CHARGING") {
+                active_charging_pile_ids_.insert(std::string(pile_id));
+            } else {
+                active_charging_pile_ids_.erase(std::string(pile_id));
                 it->second.voltage_v = 0.0;
                 it->second.current_a = 0.0;
                 it->second.power_kw = 0.0;
@@ -207,12 +217,15 @@ public:
         }
     }
 
+    // O(Active) 高性能增量扫描：仅遍历活跃充电桩，消除 100,000 次哈希桶遍历与读写锁争用
     std::vector<PileRuntimeState> get_all_active_charging_piles() const {
         std::shared_lock<std::shared_mutex> lock(mutex_);
         std::vector<PileRuntimeState> active;
-        for (const auto& [_, p] : piles_) {
-            if (p.status == "CHARGING") {
-                active.push_back(p);
+        active.reserve(active_charging_pile_ids_.size());
+        for (const auto& pid : active_charging_pile_ids_) {
+            auto it = piles_.find(pid);
+            if (it != piles_.end() && it->second.status == "CHARGING") {
+                active.push_back(it->second);
             }
         }
         return active;
@@ -221,11 +234,17 @@ public:
     void update_pile_state(const PileRuntimeState& state) {
         std::unique_lock<std::shared_mutex> lock(mutex_);
         piles_[state.pile_id] = state;
+        if (state.status == "CHARGING") {
+            active_charging_pile_ids_.insert(state.pile_id);
+        } else {
+            active_charging_pile_ids_.erase(state.pile_id);
+        }
     }
 
 private:
     ChargingStatePool() = default;
     std::unordered_map<std::string, PileRuntimeState> piles_;
+    std::unordered_set<std::string> active_charging_pile_ids_;
     mutable std::shared_mutex mutex_;
 };
 

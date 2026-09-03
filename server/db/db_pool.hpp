@@ -10,6 +10,7 @@
 #include <chrono>
 #include <expected>
 #include <functional>
+#include <unordered_set>
 #include "../common/error.hpp"
 
 namespace ev {
@@ -40,11 +41,23 @@ public:
     // 简单 SQL 执行
     PGresult* exec(const char* query);
 
+    // 预编译 SQL 支持
+    bool prepare(const char* stmt_name, const char* query, int nParams = 0);
+    PGresult* exec_prepared(
+        const char* stmt_name,
+        int nParams,
+        const char* const* paramValues,
+        const int* paramLengths = nullptr,
+        const int* paramFormats = nullptr,
+        int resultFormat = 0
+    );
+
     std::string last_error() const;
 
 private:
     std::string conninfo_;
     PGconn* conn_{nullptr};
+    std::unordered_set<std::string> prepared_stmts_;
 };
 
 // RAII 结果封装
@@ -183,6 +196,7 @@ private:
     struct SubPool {
         std::string conninfo;
         size_t max_connections{32};
+        size_t total_connections{0};
         std::queue<std::unique_ptr<DbConnection>> pool;
         std::mutex mutex;
         std::condition_variable cv;

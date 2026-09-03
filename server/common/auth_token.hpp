@@ -4,7 +4,7 @@
 #include <string_view>
 #include <chrono>
 #include <format>
-#include <sstream>
+#include <charconv>
 #include "types.hpp"
 #include "error.hpp"
 
@@ -29,36 +29,39 @@ public:
             return std::unexpected(AppError::Unauthorized);
         }
 
-        std::string s(token);
-        std::stringstream ss(s);
-        std::string prefix, uid_str, role, exp_str, sig;
+        // EV_TOKEN.<user_id>.<role>.<expires_at>.<sig>
+        std::string_view rem = token.substr(9); // skip "EV_TOKEN."
+        auto p1 = rem.find('.');
+        if (p1 == std::string_view::npos) return std::unexpected(AppError::Unauthorized);
+        std::string_view uid_str = rem.substr(0, p1);
 
-        std::getline(ss, prefix, '.');
-        std::getline(ss, uid_str, '.');
-        std::getline(ss, role, '.');
-        std::getline(ss, exp_str, '.');
-        std::getline(ss, sig, '.');
+        rem = rem.substr(p1 + 1);
+        auto p2 = rem.find('.');
+        if (p2 == std::string_view::npos) return std::unexpected(AppError::Unauthorized);
+        std::string_view role = rem.substr(0, p2);
 
-        if (uid_str.empty() || exp_str.empty()) {
+        rem = rem.substr(p2 + 1);
+        auto p3 = rem.find('.');
+        if (p3 == std::string_view::npos) return std::unexpected(AppError::Unauthorized);
+        std::string_view exp_str = rem.substr(0, p3);
+
+        int64_t uid = 0;
+        int64_t exp = 0;
+        auto res1 = std::from_chars(uid_str.data(), uid_str.data() + uid_str.size(), uid);
+        auto res2 = std::from_chars(exp_str.data(), exp_str.data() + exp_str.size(), exp);
+        if (res1.ec != std::errc() || res2.ec != std::errc()) {
             return std::unexpected(AppError::Unauthorized);
         }
 
-        try {
-            int64_t uid = std::stoll(uid_str);
-            int64_t exp = std::stoll(exp_str);
-
-            if (current_time_ms() > exp) {
-                return std::unexpected(AppError::TokenExpired);
-            }
-
-            return TokenClaims{
-                .user_id = uid,
-                .role = role,
-                .expires_at = exp
-            };
-        } catch (...) {
-            return std::unexpected(AppError::Unauthorized);
+        if (current_time_ms() > exp) {
+            return std::unexpected(AppError::TokenExpired);
         }
+
+        return TokenClaims{
+            .user_id = uid,
+            .role = std::string(role),
+            .expires_at = exp
+        };
     }
 
     static Result<TokenClaims> extract_and_verify(std::string_view auth_header) {

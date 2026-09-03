@@ -68,6 +68,15 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
     if (path == "/api/v1/auth/login" && method == http::verb::post) {
         return AuthController::handle_user_login(req);
     }
+    if (path == "/api/v1/auth/register" && method == http::verb::post) {
+        return AuthController::handle_user_register(req);
+    }
+    if ((path == "/api/v1/auth/login-password" || path == "/api/v1/auth/login/password") && method == http::verb::post) {
+        return AuthController::handle_user_password_login(req);
+    }
+    if (path == "/api/v1/auth/change-password" && method == http::verb::post) {
+        return AuthController::handle_change_password(req);
+    }
     if (path == "/api/v1/admin/auth/login" && method == http::verb::post) {
         return AuthController::handle_admin_login(req);
     }
@@ -87,7 +96,7 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
     }
 
     // 正则路径匹配: /api/v1/stations/{station_id}
-    std::regex station_detail_regex(R"(^/api/v1/stations/(\d+)$)");
+    static const std::regex station_detail_regex(R"(^/api/v1/stations/(\d+)$)");
     std::cmatch match;
     std::string path_str(path);
 
@@ -112,6 +121,9 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
         }
         if (path == "/api/v1/user/avatar" && method == http::verb::post) {
             return UserController::handle_upload_avatar(uid, req);
+        }
+        if ((path == "/api/v1/user/password" || path == "/api/v1/user/change-password") && (method == http::verb::post || method == http::verb::put)) {
+            return UserController::handle_change_password(uid, req);
         }
 
         // 钱包资产与充值
@@ -152,7 +164,7 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
         }
 
         // 订单详情: /api/v1/charging/orders/{order_id}
-        std::regex order_detail_regex(R"(^/api/v1/charging/orders/([^/]+)$)");
+        static const std::regex order_detail_regex(R"(^/api/v1/charging/orders/([^/]+)$)");
         if (method == http::verb::get && std::regex_match(path_str.c_str(), match, order_detail_regex)) {
             std::string oid = match[1].str();
             return ChargingController::handle_get_order_detail(uid, oid);
@@ -198,7 +210,7 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
         }
 
         // 单站销售统计: /api/v1/admin/stations/{station_id}/sales-stats
-        std::regex station_sales_regex(R"(^/api/v1/admin/stations/(\d+)/sales-stats$)");
+        static const std::regex station_sales_regex(R"(^/api/v1/admin/stations/(\d+)/sales-stats$)");
         if (method == http::verb::get && std::regex_match(path_str.c_str(), match, station_sales_regex)) {
             int64_t sid = std::stoll(match[1].str());
             std::string time_range = query.contains("time_range") ? query["time_range"] : "today";
@@ -206,7 +218,7 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
         }
 
         // 电站更新 / 删除: /api/v1/admin/stations/{station_id}
-        std::regex station_op_regex(R"(^/api/v1/admin/stations/(\d+)$)");
+        static const std::regex station_op_regex(R"(^/api/v1/admin/stations/(\d+)$)");
         if (std::regex_match(path_str.c_str(), match, station_op_regex)) {
             int64_t sid = std::stoll(match[1].str());
             if (method == http::verb::put) return AdminController::handle_update_station(sid, req);
@@ -229,14 +241,14 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
         }
 
         // 充电桩远程重启: /api/v1/admin/piles/{pile_id}/restart
-        std::regex pile_restart_regex(R"(^/api/v1/admin/piles/([^/]+)/restart$)");
+        static const std::regex pile_restart_regex(R"(^/api/v1/admin/piles/([^/]+)/restart$)");
         if (method == http::verb::post && std::regex_match(path_str.c_str(), match, pile_restart_regex)) {
             std::string pid = match[1].str();
             return AdminController::handle_restart_pile(pid, req);
         }
 
         // 充电桩状态切换: /api/v1/admin/piles/{pile_id}/status
-        std::regex pile_status_regex(R"(^/api/v1/admin/piles/([^/]+)/status$)");
+        static const std::regex pile_status_regex(R"(^/api/v1/admin/piles/([^/]+)/status$)");
         if (method == http::verb::put && std::regex_match(path_str.c_str(), match, pile_status_regex)) {
             std::string pid = match[1].str();
             return AdminController::handle_change_pile_status(pid, req);
@@ -252,14 +264,14 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
         }
 
         // 用户状态修改: /api/v1/admin/users/{user_id}/status
-        std::regex user_status_regex(R"(^/api/v1/admin/users/(\d+)/status$)");
+        static const std::regex user_status_regex(R"(^/api/v1/admin/users/(\d+)/status$)");
         if (method == http::verb::put && std::regex_match(path_str.c_str(), match, user_status_regex)) {
             int64_t target_uid = std::stoll(match[1].str());
             return AdminController::handle_change_user_status(target_uid, admin_uid, req);
         }
 
         // 用户钱包调账: /api/v1/admin/users/{user_id}/adjust-wallet
-        std::regex user_adjust_regex(R"(^/api/v1/admin/users/(\d+)/adjust-wallet$)");
+        static const std::regex user_adjust_regex(R"(^/api/v1/admin/users/(\d+)/adjust-wallet$)");
         if (method == http::verb::post && std::regex_match(path_str.c_str(), match, user_adjust_regex)) {
             int64_t target_uid = std::stoll(match[1].str());
             return AdminController::handle_adjust_user_wallet(target_uid, admin_uid, req);
@@ -287,7 +299,7 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
         }
 
         // 管理员指定订单一键退款: /api/v1/admin/orders/{order_id}/refund
-        std::regex order_refund_regex(R"(^/api/v1/admin/orders/([^/]+)/refund$)");
+        static const std::regex order_refund_regex(R"(^/api/v1/admin/orders/([^/]+)/refund$)");
         if (method == http::verb::post && std::regex_match(path_str.c_str(), match, order_refund_regex)) {
             std::string oid = match[1].str();
             return AdminController::handle_refund_order(oid, admin_uid, req);

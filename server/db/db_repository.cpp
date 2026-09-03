@@ -1,8 +1,10 @@
 #include "db_repository.hpp"
+#include "async_flow_persister.hpp"
 #include "../cache/redis_cache.hpp"
 #include <format>
 #include <iostream>
 #include <sstream>
+#include <unordered_set>
 
 namespace ev {
 
@@ -16,26 +18,34 @@ DbRepository& DbRepository::instance() {
 // ==========================================
 
 Result<UserModel> DbRepository::get_user_by_id(int64_t user_id) {
+    std::string cache_key = std::format("cache:user:model:{}", user_id);
+    auto cached = RedisCache::instance().get_json<UserModel>(cache_key);
+    if (cached) return *cached;
+
     auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
-    std::string sql = std::format("SELECT user_id, phone, password_hash, nickname, avatar_url, role, status, created_at, updated_at FROM users WHERE user_id = {};", user_id);
-    PgResultGuard res(conn->exec(sql.c_str()));
+    conn->prepare("stmt_get_user_by_id", "SELECT user_id, phone, password_hash, nickname, avatar_url, role, status, created_at, updated_at FROM users WHERE user_id = $1;", 1);
+    std::string uid_str = std::to_string(user_id);
+    const char* params[1] = { uid_str.c_str() };
+    PgResultGuard res(conn->exec_prepared("stmt_get_user_by_id", 1, params));
+
     if (!res.is_ok() || res.rows() == 0) {
         return std::unexpected(AppError::UserNotFound);
     }
 
-    UserModel user;
-    user.user_id = std::stoll(res.value(0, 0));
-    user.phone = res.value(0, 1);
-    user.password_hash = res.value(0, 2);
-    user.nickname = res.value(0, 3);
-    user.avatar_url = res.value(0, 4);
-    user.role = res.value(0, 5);
-    user.status = std::stoi(res.value(0, 6));
-    user.created_at = std::stoll(res.value(0, 7));
-    user.updated_at = std::stoll(res.value(0, 8));
-
+    UserModel user{
+        .user_id = std::stoll(res.value(0, 0)),
+        .phone = res.value(0, 1),
+        .password_hash = res.value(0, 2),
+        .nickname = res.value(0, 3),
+        .avatar_url = res.value(0, 4),
+        .role = res.value(0, 5),
+        .status = std::stoi(res.value(0, 6)),
+        .created_at = std::stoll(res.value(0, 7)),
+        .updated_at = std::stoll(res.value(0, 8))
+    };
+    RedisCache::instance().set_json(cache_key, user, 300);
     return user;
 }
 
@@ -197,6 +207,19 @@ Result<UserModel> DbRepository::create_user(
     });
 }
 
+Result<void> DbRepository::update_user_password(int64_t user_id, std::string_view new_password) {
+    auto conn = DbPool::instance().acquire_writer();
+    if (!conn) return std::unexpected(AppError::DatabaseError);
+
+    int64_t now = current_time_ms();
+    std::string sql = std::format("UPDATE users SET password_hash = '{}', updated_at = {} WHERE user_id = {};", new_password, now, user_id);
+    PgResultGuard res(conn->exec(sql.c_str()));
+    if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
+
+    RedisCache::instance().del(std::format("cache:user:model:{}", user_id));
+    return {};
+}
+
 Result<void> DbRepository::update_user_nickname(int64_t user_id, std::string_view nickname) {
     auto conn = DbPool::instance().acquire_writer();
     if (!conn) return std::unexpected(AppError::DatabaseError);
@@ -291,22 +314,33 @@ Result<UserAdminListResponseData> DbRepository::get_users_admin_paged(
 // ==========================================
 
 Result<UserWalletModel> DbRepository::get_wallet(int64_t user_id) {
+    std::string cache_key = std::format("cache:wallet:{}", user_id);
+    auto cached = RedisCache::instance().get_json<UserWalletModel>(cache_key);
+    if (cached) {
+        return *cached;
+    }
+
     auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
-    std::string sql = std::format("SELECT user_id, balance_cents, frozen_cents, status, updated_at FROM user_wallets WHERE user_id = {};", user_id);
-    PgResultGuard res(conn->exec(sql.c_str()));
+    conn->prepare("stmt_get_wallet", "SELECT user_id, balance_cents, frozen_cents, status, updated_at FROM user_wallets WHERE user_id = $1;", 1);
+    std::string uid_str = std::to_string(user_id);
+    const char* params[1] = { uid_str.c_str() };
+    PgResultGuard res(conn->exec_prepared("stmt_get_wallet", 1, params));
+
     if (!res.is_ok() || res.rows() == 0) {
         return std::unexpected(AppError::UserNotFound);
     }
 
-    return UserWalletModel{
+    UserWalletModel w{
         .user_id = std::stoll(res.value(0, 0)),
         .balance_cents = std::stoll(res.value(0, 1)),
         .frozen_cents = std::stoll(res.value(0, 2)),
         .status = std::stoi(res.value(0, 3)),
         .updated_at = std::stoll(res.value(0, 4))
     };
+    RedisCache::instance().set_json(cache_key, w, 60);
+    return w;
 }
 
 Result<TransactionItemDTO> DbRepository::recharge_wallet(
@@ -319,13 +353,20 @@ Result<TransactionItemDTO> DbRepository::recharge_wallet(
         return std::unexpected(AppError::InvalidAmount);
     }
 
-    return DbPool::instance().with_transaction([&](DbConnection& conn) -> Result<TransactionItemDTO> {
-        // 幂等性校验
+    // 1. 内存幂等高速路径 (O(1) 快速查验，避免频繁穿透数据库)
+    if (!idempotent_key.empty()) {
+        auto cached = AsyncFlowPersister::instance().get_cached_idempotent(std::string(idempotent_key));
+        if (cached) {
+            return *cached;
+        }
+    }
+
+    auto res = DbPool::instance().with_transaction([&](DbConnection& conn) -> Result<TransactionItemDTO> {
+        // 2. 数据库持久化幂等校验 (兜底防重)
         if (!idempotent_key.empty()) {
             std::string chk_sql = std::format("SELECT id, flow_type, amount_cents, balance_before_cents, balance_after_cents, remark, created_at FROM wallet_transaction_flows WHERE idempotent_key = '{}';", idempotent_key);
             PgResultGuard chk_res(conn.exec(chk_sql.c_str()));
             if (chk_res.is_ok() && chk_res.rows() > 0) {
-                // 已处理过的幂等请求直接返回先前结果
                 int64_t amt = std::stoll(chk_res.value(0, 2));
                 return TransactionItemDTO{
                     .transaction_id = chk_res.value(0, 0),
@@ -356,22 +397,12 @@ Result<TransactionItemDTO> DbRepository::recharge_wallet(
         int64_t before_cents = std::stoll(lock_res.value(0, 0));
         int64_t after_cents = before_cents + amount_cents;
         int64_t now = current_time_ms();
-
         std::string tx_id = std::format("TX_REC_{}_{}", now, user_id);
 
-        // 更新余额
+        // 更新余额 (核心事务仅包含钱包余额更新，耗时极短)
         std::string update_sql = std::format("UPDATE user_wallets SET balance_cents = {}, updated_at = {} WHERE user_id = {};", after_cents, now, user_id);
         PgResultGuard u_res(conn.exec(update_sql.c_str()));
         if (!u_res.is_ok()) return std::unexpected(AppError::DatabaseError);
-
-        // 写入不可篡改流水
-        std::string flow_sql = std::format(
-            "INSERT INTO wallet_transaction_flows (id, user_id, flow_type, amount_cents, balance_before_cents, balance_after_cents, related_order_id, operator_id, remark, idempotent_key, created_at) "
-            "VALUES ('{}', {}, 1, {}, {}, {}, '', 0, '{}', '{}', {});",
-            tx_id, user_id, amount_cents, before_cents, after_cents, remark, idempotent_key, now
-        );
-        PgResultGuard f_res(conn.exec(flow_sql.c_str()));
-        if (!f_res.is_ok()) return std::unexpected(AppError::DatabaseError);
 
         return TransactionItemDTO{
             .transaction_id = tx_id,
@@ -386,6 +417,26 @@ Result<TransactionItemDTO> DbRepository::recharge_wallet(
             .created_at = now
         };
     });
+
+    // 3. 事务成功后异步投递流水落盘引擎并清除钱包缓存
+    if (res) {
+        RedisCache::instance().del(std::format("cache:wallet:{}", user_id));
+        AsyncFlowPersister::instance().enqueue(WalletFlowItem{
+            .id = res->transaction_id,
+            .user_id = user_id,
+            .flow_type = 1,
+            .amount_cents = amount_cents,
+            .balance_before_cents = yuan_to_cents(res->balance_before),
+            .balance_after_cents = yuan_to_cents(res->balance_after),
+            .related_order_id = "",
+            .operator_id = 0,
+            .remark = std::string(remark),
+            .idempotent_key = std::string(idempotent_key),
+            .created_at = res->created_at
+        });
+    }
+
+    return res;
 }
 
 Result<TransactionListResponseData> DbRepository::get_transactions_paged(
@@ -438,6 +489,31 @@ Result<TransactionListResponseData> DbRepository::get_transactions_paged(
         });
     }
 
+    // 第一页查询时，融合内存中尚未落盘的最新流水，确保“写后即读”一致性
+    if (page == 1) {
+        auto pending = AsyncFlowPersister::instance().get_pending_for_user(user_id, flow_type);
+        if (!pending.empty()) {
+            std::unordered_set<std::string> seen_ids;
+            for (const auto& r : data.records) {
+                seen_ids.insert(r.transaction_id);
+            }
+            std::vector<TransactionItemDTO> unpersisted;
+            for (auto& p : pending) {
+                if (!seen_ids.contains(p.transaction_id)) {
+                    unpersisted.push_back(std::move(p));
+                }
+            }
+            if (!unpersisted.empty()) {
+                data.total += unpersisted.size();
+                unpersisted.insert(unpersisted.end(), data.records.begin(), data.records.end());
+                if (unpersisted.size() > static_cast<size_t>(page_size)) {
+                    unpersisted.resize(page_size);
+                }
+                data.records = std::move(unpersisted);
+            }
+        }
+    }
+
     return data;
 }
 
@@ -448,7 +524,7 @@ Result<UserWalletAdjustResponseData> DbRepository::adjust_user_wallet(
     std::string_view idempotent_key,
     std::string_view remark
 ) {
-    return DbPool::instance().with_transaction([&](DbConnection& conn) -> Result<UserWalletAdjustResponseData> {
+    auto res = DbPool::instance().with_transaction([&](DbConnection& conn) -> Result<UserWalletAdjustResponseData> {
         // 行级锁
         std::string lock_sql = std::format("SELECT balance_cents FROM user_wallets WHERE user_id = {} FOR UPDATE;", user_id);
         PgResultGuard lock_res(conn.exec(lock_sql.c_str()));
@@ -468,13 +544,6 @@ Result<UserWalletAdjustResponseData> DbRepository::adjust_user_wallet(
         std::string u_sql = std::format("UPDATE user_wallets SET balance_cents = {}, updated_at = {} WHERE user_id = {};", after_cents, now, user_id);
         conn.exec(u_sql.c_str());
 
-        std::string f_sql = std::format(
-            "INSERT INTO wallet_transaction_flows (id, user_id, flow_type, amount_cents, balance_before_cents, balance_after_cents, related_order_id, operator_id, remark, idempotent_key, created_at) "
-            "VALUES ('{}', {}, 4, {}, {}, {}, '', {}, '{}', '{}', {});",
-            tx_id, user_id, amount_cents, before_cents, after_cents, operator_id, remark, idempotent_key, now
-        );
-        conn.exec(f_sql.c_str());
-
         return UserWalletAdjustResponseData{
             .transaction_id = tx_id,
             .user_id = user_id,
@@ -485,6 +554,25 @@ Result<UserWalletAdjustResponseData> DbRepository::adjust_user_wallet(
             .created_at = now
         };
     });
+
+    if (res) {
+        RedisCache::instance().del(std::format("cache:wallet:{}", user_id));
+        AsyncFlowPersister::instance().enqueue(WalletFlowItem{
+            .id = res->transaction_id,
+            .user_id = user_id,
+            .flow_type = 4,
+            .amount_cents = amount_cents,
+            .balance_before_cents = yuan_to_cents(res->balance_before),
+            .balance_after_cents = yuan_to_cents(res->balance_after),
+            .related_order_id = "",
+            .operator_id = operator_id,
+            .remark = std::string(remark),
+            .idempotent_key = std::string(idempotent_key),
+            .created_at = res->created_at
+        });
+    }
+
+    return res;
 }
 
 // ==========================================
@@ -945,22 +1033,33 @@ Result<void> DbRepository::update_pile_metrics(std::string_view pile_id, int64_t
 // ==========================================
 
 Result<std::optional<OrderModel>> DbRepository::get_active_order_by_user(int64_t user_id) {
+    std::string cache_key = std::format("cache:order:active:{}", user_id);
+    auto cached = RedisCache::instance().get_json<std::optional<OrderModel>>(cache_key);
+    if (cached) {
+        return *cached;
+    }
+
     auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
-    std::string sql = std::format(
+    conn->prepare("stmt_get_active_order",
         "SELECT order_id, user_id, station_id, pile_id, strategy_type, strategy_value, order_status, "
         "start_time, end_time, start_soc, end_soc, charged_energy_kwh, electricity_price, electricity_fee_cents, "
         "service_price, service_fee_cents, overtime_grace_minutes, overtime_duration_minutes, overtime_rate_per_15min, "
         "overtime_fee_cents, total_fee_cents, stop_reason, settled_at, refund_transaction_id, operator_id, "
         "refund_reason, refunded_at, created_at, updated_at "
-        "FROM charging_orders WHERE user_id = {} AND order_status IN ('CHARGING', 'UNSETTLED') LIMIT 1;",
-        user_id
-    );
+        "FROM charging_orders WHERE user_id = $1 AND order_status IN ('CHARGING', 'UNSETTLED') LIMIT 1;", 1);
 
-    PgResultGuard res(conn->exec(sql.c_str()));
+    std::string uid_str = std::to_string(user_id);
+    const char* params[1] = { uid_str.c_str() };
+    PgResultGuard res(conn->exec_prepared("stmt_get_active_order", 1, params));
+
     if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
-    if (res.rows() == 0) return std::nullopt;
+    if (res.rows() == 0) {
+        std::optional<OrderModel> empty_opt = std::nullopt;
+        RedisCache::instance().set_json(cache_key, empty_opt, 5);
+        return empty_opt;
+    }
 
     OrderModel order;
     order.order_id = res.value(0, 0);
@@ -993,7 +1092,9 @@ Result<std::optional<OrderModel>> DbRepository::get_active_order_by_user(int64_t
     order.created_at = std::stoll(res.value(0, 27));
     order.updated_at = std::stoll(res.value(0, 28));
 
-    return order;
+    std::optional<OrderModel> opt = order;
+    RedisCache::instance().set_json(cache_key, opt, 5);
+    return opt;
 }
 
 Result<OrderModel> DbRepository::get_order_by_id(std::string_view order_id) {
@@ -1048,7 +1149,7 @@ Result<OrderModel> DbRepository::get_order_by_id(std::string_view order_id) {
 }
 
 Result<void> DbRepository::create_order(const OrderModel& order) {
-    return DbPool::instance().with_transaction([&](DbConnection& conn) -> Result<void> {
+    auto res = DbPool::instance().with_transaction([&](DbConnection& conn) -> Result<void> {
         std::string sql = std::format(
             "INSERT INTO charging_orders (order_id, user_id, station_id, pile_id, strategy_type, strategy_value, order_status, start_time, end_time, start_soc, end_soc, charged_energy_kwh, electricity_price, electricity_fee_cents, service_price, service_fee_cents, overtime_grace_minutes, overtime_duration_minutes, overtime_rate_per_15min, overtime_fee_cents, total_fee_cents, stop_reason, settled_at, created_at, updated_at) "
             "VALUES ('{}', {}, {}, '{}', '{}', {}, '{}', {}, 0, {}, {}, 0.0, {}, 0, {}, 0, {}, 0, {}, 0, 0, '', 0, {}, {});",
@@ -1064,6 +1165,11 @@ Result<void> DbRepository::create_order(const OrderModel& order) {
 
         return {};
     });
+
+    if (res) {
+        RedisCache::instance().del(std::format("cache:order:active:{}", order.user_id));
+    }
+    return res;
 }
 
 Result<StopChargingResponseData> DbRepository::stop_order(
@@ -1121,6 +1227,10 @@ Result<SettleOrderResponseData> DbRepository::settle_order_with_wallet(
     std::string_view order_id,
     std::string_view idempotent_key
 ) {
+    int64_t settled_user_id = 0;
+    int64_t before_balance_cents = 0;
+    bool is_newly_settled = false;
+
     auto res = DbPool::instance().with_transaction([&](DbConnection& conn) -> Result<SettleOrderResponseData> {
         // 锁定订单行
         std::string o_sql = std::format("SELECT user_id, order_status, total_fee_cents, electricity_fee_cents, service_fee_cents, overtime_fee_cents FROM charging_orders WHERE order_id = '{}' FOR UPDATE;", order_id);
@@ -1174,6 +1284,10 @@ Result<SettleOrderResponseData> DbRepository::settle_order_with_wallet(
         int64_t now = current_time_ms();
         std::string tx_id = std::format("TX_ORD_{}_{}", now, user_id);
 
+        settled_user_id = user_id;
+        before_balance_cents = before_cents;
+        is_newly_settled = true;
+
         // 扣款更新
         std::string u_wallet = std::format("UPDATE user_wallets SET balance_cents = {}, updated_at = {} WHERE user_id = {};", after_cents, now, user_id);
         conn.exec(u_wallet.c_str());
@@ -1181,14 +1295,6 @@ Result<SettleOrderResponseData> DbRepository::settle_order_with_wallet(
         // 订单状态置为 COMPLETED
         std::string u_order = std::format("UPDATE charging_orders SET order_status = 'COMPLETED', settled_at = {}, updated_at = {} WHERE order_id = '{}';", now, now, order_id);
         conn.exec(u_order.c_str());
-
-        // 流水落盘
-        std::string flow_sql = std::format(
-            "INSERT INTO wallet_transaction_flows (id, user_id, flow_type, amount_cents, balance_before_cents, balance_after_cents, related_order_id, operator_id, remark, idempotent_key, created_at) "
-            "VALUES ('{}', {}, 2, {}, {}, {}, '{}', 0, '充电订单扣费', '{}', {});",
-            tx_id, user_id, -total_fee_cents, before_cents, after_cents, order_id, idempotent_key, now
-        );
-        conn.exec(flow_sql.c_str());
 
         return SettleOrderResponseData{
             .order_id = std::string(order_id),
@@ -1205,9 +1311,24 @@ Result<SettleOrderResponseData> DbRepository::settle_order_with_wallet(
         };
     });
 
-    if (res) {
+    if (res && is_newly_settled) {
+        AsyncFlowPersister::instance().enqueue(WalletFlowItem{
+            .id = std::format("TX_ORD_{}_{}", res->settled_at, settled_user_id),
+            .user_id = settled_user_id,
+            .flow_type = 2,
+            .amount_cents = -res->total_fee_cents,
+            .balance_before_cents = before_balance_cents,
+            .balance_after_cents = res->new_balance_cents,
+            .related_order_id = std::string(order_id),
+            .operator_id = 0,
+            .remark = "充电订单扣费",
+            .idempotent_key = std::string(idempotent_key),
+            .created_at = res->settled_at
+        });
         RedisCache::instance().del_prefix("cache:dashboard:");
         RedisCache::instance().del_prefix("cache:station:");
+        RedisCache::instance().del(std::format("cache:wallet:{}", settled_user_id));
+        RedisCache::instance().del(std::format("cache:order:active:{}", settled_user_id));
     }
     return res;
 }
@@ -1418,14 +1539,6 @@ Result<AdminOrderRefundResponseData> DbRepository::refund_order_with_wallet(
         );
         conn.exec(u_order.c_str());
 
-        // 流水落盘
-        std::string flow_sql = std::format(
-            "INSERT INTO wallet_transaction_flows (id, user_id, flow_type, amount_cents, balance_before_cents, balance_after_cents, related_order_id, operator_id, remark, idempotent_key, created_at) "
-            "VALUES ('{}', {}, 3, {}, {}, {}, '{}', {}, '{}', '{}', {});",
-            tx_id, user_id, refund_amount_cents, before_cents, after_cents, order_id, operator_id, reason, idempotent_key, now
-        );
-        conn.exec(flow_sql.c_str());
-
         return AdminOrderRefundResponseData{
             .refund_transaction_id = tx_id,
             .order_id = std::string(order_id),
@@ -1441,8 +1554,22 @@ Result<AdminOrderRefundResponseData> DbRepository::refund_order_with_wallet(
     });
 
     if (res) {
+        AsyncFlowPersister::instance().enqueue(WalletFlowItem{
+            .id = res->refund_transaction_id,
+            .user_id = res->user_id,
+            .flow_type = 3,
+            .amount_cents = res->refund_amount_cents,
+            .balance_before_cents = yuan_to_cents(res->user_balance_before),
+            .balance_after_cents = yuan_to_cents(res->user_balance_after),
+            .related_order_id = std::string(order_id),
+            .operator_id = operator_id,
+            .remark = std::string(reason),
+            .idempotent_key = std::string(idempotent_key),
+            .created_at = res->refunded_at
+        });
         RedisCache::instance().del_prefix("cache:dashboard:");
         RedisCache::instance().del_prefix("cache:station:");
+        RedisCache::instance().del(std::format("cache:wallet:{}", res->user_id));
     }
     return res;
 }

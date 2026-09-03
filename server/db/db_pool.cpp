@@ -22,6 +22,7 @@ bool DbConnection::is_valid() const {
 }
 
 void DbConnection::reset() {
+    prepared_stmts_.clear();
     if (conn_) {
         PQreset(conn_);
     } else {
@@ -60,6 +61,46 @@ PGresult* DbConnection::exec(const char* query) {
     return PQexec(conn_, query);
 }
 
+bool DbConnection::prepare(const char* stmt_name, const char* query, int nParams) {
+    if (!is_valid()) {
+        reset();
+    }
+    if (!conn_) return false;
+    if (prepared_stmts_.contains(stmt_name)) {
+        return true;
+    }
+    PGresult* res = PQprepare(conn_, stmt_name, query, nParams, nullptr);
+    if (!res) return false;
+    bool ok = (PQresultStatus(res) == PGRES_COMMAND_OK);
+    PQclear(res);
+    if (ok) {
+        prepared_stmts_.insert(stmt_name);
+    }
+    return ok;
+}
+
+PGresult* DbConnection::exec_prepared(
+    const char* stmt_name,
+    int nParams,
+    const char* const* paramValues,
+    const int* paramLengths,
+    const int* paramFormats,
+    int resultFormat
+) {
+    if (!is_valid()) {
+        reset();
+    }
+    return PQexecPrepared(
+        conn_,
+        stmt_name,
+        nParams,
+        paramValues,
+        paramLengths,
+        paramFormats,
+        resultFormat
+    );
+}
+
 std::string DbConnection::last_error() const {
     return conn_ ? PQerrorMessage(conn_) : "Null connection";
 }
@@ -82,6 +123,7 @@ void DbPool::init(
         std::lock_guard<std::mutex> lock(writer_pool_.mutex);
         writer_pool_.conninfo = writer_conninfo;
         writer_pool_.max_connections = max_connections;
+        writer_pool_.total_connections = 0;
         writer_pool_.is_shutdown = false;
         while (!writer_pool_.pool.empty()) writer_pool_.pool.pop();
 
@@ -89,6 +131,7 @@ void DbPool::init(
             auto conn = std::make_unique<DbConnection>(writer_pool_.conninfo);
             if (conn->is_valid()) {
                 writer_pool_.pool.push(std::move(conn));
+                writer_pool_.total_connections++;
             } else {
                 std::cerr << std::format("[DbPool Warning] Writer conn {} init failed: {}\n", i, conn->last_error());
             }
@@ -100,6 +143,7 @@ void DbPool::init(
         std::lock_guard<std::mutex> lock(reader_pool_.mutex);
         reader_pool_.conninfo = reader_conninfo.empty() ? writer_conninfo : reader_conninfo;
         reader_pool_.max_connections = max_connections;
+        reader_pool_.total_connections = 0;
         reader_pool_.is_shutdown = false;
         while (!reader_pool_.pool.empty()) reader_pool_.pool.pop();
 
@@ -107,6 +151,7 @@ void DbPool::init(
             auto conn = std::make_unique<DbConnection>(reader_pool_.conninfo);
             if (conn->is_valid()) {
                 reader_pool_.pool.push(std::move(conn));
+                reader_pool_.total_connections++;
             } else {
                 std::cerr << std::format("[DbPool Warning] Reader conn {} init failed: {}\n", i, conn->last_error());
             }
@@ -125,12 +170,14 @@ void DbPool::shutdown() {
     {
         std::lock_guard<std::mutex> lock(writer_pool_.mutex);
         writer_pool_.is_shutdown = true;
+        writer_pool_.total_connections = 0;
         while (!writer_pool_.pool.empty()) writer_pool_.pool.pop();
         writer_pool_.cv.notify_all();
     }
     {
         std::lock_guard<std::mutex> lock(reader_pool_.mutex);
         reader_pool_.is_shutdown = true;
+        reader_pool_.total_connections = 0;
         while (!reader_pool_.pool.empty()) reader_pool_.pool.pop();
         reader_pool_.cv.notify_all();
     }
@@ -154,15 +201,11 @@ DbPool::PooledConnection DbPool::acquire_from_subpool(
         return nullptr;
     }
 
-    if (subpool.pool.empty()) {
-        if (subpool.cv.wait_for(lock, timeout, [&subpool]() { return !subpool.pool.empty() || subpool.is_shutdown; })) {
-            if (subpool.is_shutdown || subpool.pool.empty()) return nullptr;
-        } else {
-            // 超时但未达到最大连接数时新建
-            auto conn = std::make_unique<DbConnection>(subpool.conninfo);
-            if (!conn->is_valid()) {
-                return nullptr;
-            }
+    // 1. 若当前空闲池为空，但未达到最大连接数配额：立即动态扩容创建新连接，零等待！
+    if (subpool.pool.empty() && subpool.total_connections < subpool.max_connections) {
+        auto conn = std::make_unique<DbConnection>(subpool.conninfo);
+        if (conn->is_valid()) {
+            subpool.total_connections++;
             auto raw_ptr = conn.release();
             return PooledConnection(
                 raw_ptr,
@@ -174,9 +217,21 @@ DbPool::PooledConnection DbPool::acquire_from_subpool(
                         subpool.cv.notify_one();
                     } else {
                         delete ptr;
+                        if (subpool.total_connections > 0) subpool.total_connections--;
                     }
                 }
             );
+        }
+    }
+
+    // 2. 若当前已达最大连接数且无空闲连接：进入排队等待可用连接
+    if (subpool.pool.empty()) {
+        auto wait_timeout = std::min(timeout, std::chrono::milliseconds(200));
+        bool acquired = subpool.cv.wait_for(lock, wait_timeout, [&subpool]() {
+            return !subpool.pool.empty() || subpool.is_shutdown;
+        });
+        if (!acquired || subpool.is_shutdown || subpool.pool.empty()) {
+            return nullptr;
         }
     }
 
@@ -198,6 +253,7 @@ DbPool::PooledConnection DbPool::acquire_from_subpool(
                 subpool.cv.notify_one();
             } else {
                 delete ptr;
+                if (subpool.total_connections > 0) subpool.total_connections--;
             }
         }
     );

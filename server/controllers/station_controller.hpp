@@ -25,26 +25,33 @@ public:
         data.total = nearby_results.size();
 
         for (const auto& item : nearby_results) {
-            auto st_res = DbRepository::instance().get_station_by_id(item.station_id);
-            if (!st_res) continue;
+            auto mem_st = StationRTree::instance().get_station(item.station_id);
+            StationModel st;
+            if (mem_st) {
+                st = *mem_st;
+            } else {
+                auto st_res = DbRepository::instance().get_station_by_id(item.station_id);
+                if (!st_res) continue;
+                st = *st_res;
+            }
 
             auto summary = ChargingStatePool::instance().get_station_pile_summary(item.station_id);
 
             data.stations.push_back(StationNearbyCardDTO{
-                .station_id = st_res->station_id,
-                .station_name = st_res->station_name,
-                .address = st_res->address,
-                .latitude = st_res->latitude,
-                .longitude = st_res->longitude,
+                .station_id = st.station_id,
+                .station_name = st.station_name,
+                .address = st.address,
+                .latitude = st.latitude,
+                .longitude = st.longitude,
                 .distance_km = item.distance_km,
-                .price_per_kwh = st_res->price_per_kwh,
-                .service_fee_per_kwh = st_res->service_fee_per_kwh,
-                .overtime_fee_per_15min = st_res->overtime_fee_per_15min,
+                .price_per_kwh = st.price_per_kwh,
+                .service_fee_per_kwh = st.service_fee_per_kwh,
+                .overtime_fee_per_15min = st.overtime_fee_per_15min,
                 .total_piles = summary.total_piles,
                 .idle_piles = summary.idle_piles,
                 .fast_piles_idle = summary.fast_piles_idle,
                 .slow_piles_idle = summary.slow_piles_idle,
-                .station_status = st_res->status
+                .station_status = st.status
             });
         }
 
@@ -52,18 +59,23 @@ public:
     }
 
     static http::response<http::string_body> handle_get_station_detail(int64_t station_id) {
-        std::string cache_key = std::format("cache:station:model:{}", station_id);
-        auto cached_st = RedisCache::instance().get_json<StationModel>(cache_key);
+        auto mem_st = StationRTree::instance().get_station(station_id);
         StationModel st;
-        if (cached_st) {
-            st = *cached_st;
+        if (mem_st) {
+            st = *mem_st;
         } else {
-            auto st_res = DbRepository::instance().get_station_by_id(station_id);
-            if (!st_res) {
-                return make_error_response(st_res.error());
+            std::string cache_key = std::format("cache:station:model:{}", station_id);
+            auto cached_st = RedisCache::instance().get_json<StationModel>(cache_key);
+            if (cached_st) {
+                st = *cached_st;
+            } else {
+                auto st_res = DbRepository::instance().get_station_by_id(station_id);
+                if (!st_res) {
+                    return make_error_response(st_res.error());
+                }
+                st = *st_res;
+                RedisCache::instance().set_json(cache_key, st, 120); // 120s TTL
             }
-            st = *st_res;
-            RedisCache::instance().set_json(cache_key, st, 120); // 120s TTL
         }
 
         auto pool_piles = ChargingStatePool::instance().get_piles_by_station(station_id);

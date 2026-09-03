@@ -21,6 +21,7 @@ public:
     Result<UserModel> get_user_by_account(std::string_view account);
     Result<std::pair<UserModel, bool>> get_or_create_user_passwordless(std::string_view phone);
     Result<UserModel> create_user(std::string_view phone, std::string_view password, std::string_view nickname, std::string_view role = "user");
+    Result<void> update_user_password(int64_t user_id, std::string_view new_password);
     Result<void> update_user_nickname(int64_t user_id, std::string_view nickname);
     Result<std::string> update_user_avatar(int64_t user_id, std::string_view avatar_url);
     Result<void> update_user_status(int64_t user_id, int status);

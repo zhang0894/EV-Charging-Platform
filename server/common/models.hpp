@@ -129,6 +129,17 @@ struct RegisterRequest {
     std::string nickname;
 };
 
+struct PasswordLoginRequest {
+    std::string phone;
+    std::string password;
+};
+
+struct ChangePasswordRequest {
+    std::string old_password;
+    std::string new_password;
+    std::string phone; // 兼容免鉴权带手机号
+};
+
 struct RefreshTokenRequest {
     std::string refresh_token;
 };

@@ -3,7 +3,10 @@
 #include <boost/geometry.hpp>
 #include <boost/geometry/geometries/point.hpp>
 #include <boost/geometry/index/rtree.hpp>
+#include "../common/models.hpp"
 #include <vector>
+#include <unordered_map>
+#include <optional>
 #include <shared_mutex>
 #include <cmath>
 #include <algorithm>
@@ -56,6 +59,37 @@ public:
         rtree_ = bgi::rtree<StationValue, bgi::rstar<16>>(values.begin(), values.end());
     }
 
+    // 针对全量 StationModel 进行 R-Tree 与元数据常驻内存双重索引构建
+    void build_index(const std::vector<StationModel>& stations) {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        std::vector<StationValue> values;
+        values.reserve(stations.size());
+        station_map_.clear();
+        station_map_.reserve(stations.size());
+
+        for (const auto& s : stations) {
+            values.emplace_back(GeoPoint(s.longitude, s.latitude), s.station_id);
+            station_map_[s.station_id] = s;
+        }
+
+        rtree_ = bgi::rtree<StationValue, bgi::rstar<16>>(values.begin(), values.end());
+    }
+
+    // O(1) 获取电站常驻内存元数据 (避免高频搜桩 N+1 次查库)
+    std::optional<StationModel> get_station(int64_t station_id) const {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        auto it = station_map_.find(station_id);
+        if (it != station_map_.end()) {
+            return it->second;
+        }
+        return std::nullopt;
+    }
+
+    void update_station_cache(const StationModel& station) {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        station_map_[station.station_id] = station;
+    }
+
     std::vector<StationDistanceResult> search_nearby(
         double user_lat,
         double user_lon,
@@ -105,7 +139,8 @@ public:
 private:
     StationRTree() = default;
     bgi::rtree<StationValue, bgi::rstar<16>> rtree_;
-    std::shared_mutex mutex_;
+    std::unordered_map<int64_t, StationModel> station_map_;
+    mutable std::shared_mutex mutex_;
 };
 
 } // namespace ev

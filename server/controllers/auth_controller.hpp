@@ -19,12 +19,17 @@ public:
             return make_error_response(AppError::InvalidJsonPayload, "Invalid login JSON payload or missing phone");
         }
 
-        auto res = DbRepository::instance().get_or_create_user_passwordless(login_req.phone);
-        if (!res) {
-            return make_error_response(res.error());
+        if (login_req.phone.size() != 11) {
+            return make_error_response(AppError::InvalidPhoneFormat);
         }
 
-        auto [user, is_new] = *res;
+        auto res = DbRepository::instance().get_user_by_phone(login_req.phone);
+        if (!res) {
+            // 用户不存在，返回 10001 业务码而非自动注册
+            return make_error_response(AppError::UserNotFound, "User not found");
+        }
+
+        auto user = *res;
         if (user.status == 2) {
             return make_error_response(AppError::UserAccountFrozen);
         }
@@ -32,8 +37,8 @@ public:
         auto wallet = DbRepository::instance().get_wallet(user.user_id);
         int64_t balance_cents = wallet ? wallet->balance_cents : 0;
 
-        std::string access_token = AuthTokenManager::generate_token(user.user_id, "user", 7200);
-        std::string refresh_token = AuthTokenManager::generate_token(user.user_id, "user", 86400 * 7);
+        std::string access_token = AuthTokenManager::generate_token(user.user_id, user.role, 7200);
+        std::string refresh_token = AuthTokenManager::generate_token(user.user_id, user.role, 86400 * 7);
 
         AuthResponseData resp_data{
             .user_id = user.user_id,
@@ -42,7 +47,49 @@ public:
             .avatar_url = user.avatar_url,
             .balance = cents_to_yuan(balance_cents),
             .balance_cents = balance_cents,
-            .is_new_user = is_new,
+            .is_new_user = false,
+            .access_token = access_token,
+            .refresh_token = refresh_token,
+            .role = user.role,
+            .expires_in = 7200
+        };
+
+        return make_success_response(resp_data);
+    }
+
+    static http::response<http::string_body> handle_user_register(const http::request<http::string_body>& req) {
+        RegisterRequest reg_req;
+        auto err = glz::read_json(reg_req, req.body());
+        if (err || reg_req.phone.empty()) {
+            return make_error_response(AppError::InvalidJsonPayload, "Invalid register JSON payload or missing phone");
+        }
+
+        if (reg_req.phone.size() != 11) {
+            return make_error_response(AppError::InvalidPhoneFormat);
+        }
+
+        auto existing = DbRepository::instance().get_user_by_phone(reg_req.phone);
+        if (existing) {
+            return make_error_response(AppError::UserAlreadyExists, "Phone number already registered");
+        }
+
+        auto res = DbRepository::instance().create_user(reg_req.phone, reg_req.password, reg_req.nickname, "user");
+        if (!res) {
+            return make_error_response(res.error());
+        }
+
+        auto user = *res;
+        std::string access_token = AuthTokenManager::generate_token(user.user_id, "user", 7200);
+        std::string refresh_token = AuthTokenManager::generate_token(user.user_id, "user", 86400 * 7);
+
+        AuthResponseData resp_data{
+            .user_id = user.user_id,
+            .phone = user.phone,
+            .nickname = user.nickname,
+            .avatar_url = user.avatar_url,
+            .balance = 0.0,
+            .balance_cents = 0,
+            .is_new_user = true,
             .access_token = access_token,
             .refresh_token = refresh_token,
             .role = "user",
@@ -50,6 +97,82 @@ public:
         };
 
         return make_success_response(resp_data);
+    }
+
+    static http::response<http::string_body> handle_user_password_login(const http::request<http::string_body>& req) {
+        PasswordLoginRequest p_req;
+        auto err = glz::read_json(p_req, req.body());
+        if (err || p_req.phone.empty() || p_req.password.empty()) {
+            return make_error_response(AppError::InvalidJsonPayload, "Missing phone or password");
+        }
+
+        if (p_req.phone.size() != 11) {
+            return make_error_response(AppError::InvalidPhoneFormat);
+        }
+
+        auto res = DbRepository::instance().get_user_by_phone(p_req.phone);
+        if (!res) {
+            return make_error_response(AppError::UserNotFound, "User not found");
+        }
+
+        auto user = *res;
+        if (user.status == 2) {
+            return make_error_response(AppError::UserAccountFrozen);
+        }
+
+        if (user.password_hash != p_req.password) {
+            return make_error_response(AppError::InvalidCredentials, "Incorrect password");
+        }
+
+        auto wallet = DbRepository::instance().get_wallet(user.user_id);
+        int64_t balance_cents = wallet ? wallet->balance_cents : 0;
+
+        std::string access_token = AuthTokenManager::generate_token(user.user_id, user.role, 7200);
+        std::string refresh_token = AuthTokenManager::generate_token(user.user_id, user.role, 86400 * 7);
+
+        AuthResponseData resp_data{
+            .user_id = user.user_id,
+            .phone = user.phone,
+            .nickname = user.nickname,
+            .avatar_url = user.avatar_url,
+            .balance = cents_to_yuan(balance_cents),
+            .balance_cents = balance_cents,
+            .is_new_user = false,
+            .access_token = access_token,
+            .refresh_token = refresh_token,
+            .role = user.role,
+            .expires_in = 7200
+        };
+
+        return make_success_response(resp_data);
+    }
+
+    static http::response<http::string_body> handle_change_password(const http::request<http::string_body>& req) {
+        ChangePasswordRequest cp_req;
+        auto err = glz::read_json(cp_req, req.body());
+        if (err || cp_req.new_password.empty() || cp_req.phone.empty()) {
+            return make_error_response(AppError::InvalidJsonPayload, "Missing phone, old_password, or new_password");
+        }
+
+        auto u_res = DbRepository::instance().get_user_by_phone(cp_req.phone);
+        if (!u_res) {
+            return make_error_response(AppError::UserNotFound, "User not found");
+        }
+
+        if (u_res->status == 2) {
+            return make_error_response(AppError::UserAccountFrozen);
+        }
+
+        if (!u_res->password_hash.empty() && u_res->password_hash != cp_req.old_password) {
+            return make_error_response(AppError::InvalidCredentials, "Incorrect old password");
+        }
+
+        auto upd = DbRepository::instance().update_user_password(u_res->user_id, cp_req.new_password);
+        if (!upd) {
+            return make_error_response(upd.error());
+        }
+
+        return make_empty_success_response();
     }
 
     static http::response<http::string_body> handle_admin_login(const http::request<http::string_body>& req) {

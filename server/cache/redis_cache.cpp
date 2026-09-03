@@ -296,4 +296,18 @@ void RedisCache::del_prefix(std::string_view prefix) {
     }
 }
 
+bool RedisCache::flush_all() {
+    // 1. 清空内存缓存
+    {
+        std::unique_lock<std::shared_mutex> lock(local_mutex_);
+        local_cache_.clear();
+    }
+    // 2. 清空 Redis (若在线)
+    std::lock_guard<std::mutex> r_lock(redis_mutex_);
+    if (check_and_reconnect()) {
+        execute_redis_cmd("*1\r\n$8\r\nFLUSHALL\r\n", nullptr);
+    }
+    return true;
+}
+
 } // namespace ev
