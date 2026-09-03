@@ -4,50 +4,43 @@
 #include <QList>
 #include <QString>
 
-// 充电业务逻辑（A 负责）—— 所有 SQL 只出现在这里，UI 层禁止写 SQL
-// 订单状态（见 db/README 数据字典）：0=充电中  1=待结算  2=已结算
+// 充电业务逻辑（云端版）—— 数据全部来自 server API（见 端口设计文档 2.x）
+// UI 层只认识这里的函数和结构体，完全不知道数据是从网络来的
+// 结构体字段和本地 SQLite 版保持一致，界面代码一行不用改
 namespace ChargeService {
 
-struct StationOpt {          // 选桩页的电站下拉框（B 的电站列表接入前先用）
+struct StationOpt {          // 选桩页的电站下拉框
     int     id = 0;
     QString name;
-    double  price = 0;       // 元/度
-    int     freeCount = 0;   // 空闲桩数
+    double  price = 0;       // 元/度（price_per_kwh，服务费另计）
+    int     freeCount = 0;   // idle_piles
 };
 
 struct PileOpt {             // 某站的一个空闲桩
-    int     id = 0;
-    QString code;
-    QString typeText;        // 快充 / 慢充
-    double  powerKw = 0;
+    QString id;              // 云端桩号是字符串，如 P00101
+    QString code;            // pile_name，如 01号直流快充桩
+    QString typeText;        // type_desc，如 直流快充
+    double  powerKw = 0;     // max_power_kw
 };
 
-struct ActiveOrder {         // 当前用户的未完成订单（状态 0 或 1）
-    int     id = 0;
-    int     pileId = 0;
-    QString pileCode;
+struct ActiveOrder {         // 当前用户的未完成订单（active-order 接口）
+    QString id;              // 云端订单号是字符串，如 ORD_20260902_1001
+    QString pileCode;        // pile_id
     QString stationName;
-    QString startTime;       // "yyyy-MM-dd HH:mm:ss"
-    double  unitPrice = 0;
-    double  powerKw = 0;
-    int     status = 0;      // 0=充电中 1=待结算
-    int     durationMin = 0;
-    double  kwh = 0;
-    double  amount = 0;
+    QString startTime;       // 已从毫秒时间戳转成 "yyyy-MM-dd HH:mm:ss"
+    int     status = 0;      // 0=充电中 1=待结算（由 order_status 映射）
+    double  kwh = 0;         // charged_energy_kwh
+    double  amount = 0;      // current_cost
 };
 
-int    timeScale();          // 时间加速倍率，NCS_TIME_SCALE，默认 60
-double minStartBalance();    // 最低起充余额，默认 5 元
+// 免密登录拿 token（正式登录页是 B 的，这里先直接用手机号登，NCS_PHONE 可换号）
+bool devLogin(QString *err);
 
-bool               findUnfinished(int userId, ActiveOrder *out);   // 充电前检查
+bool               findUnfinished(int userId, ActiveOrder *out);   // userId 仅为兼容界面签名
 QList<StationOpt>  stationOptions();
 QList<PileOpt>     freePiles(int stationId);
 
-// B 的登录/充值接入前的开发辅助：挑一个「正常、无未完成订单、余额>=20」的可测试用户
-// 找不到就给 1 号补足余额。B 的登录页接入后删除
-int devDefaultUser();
-
-// TODO：UC-U-07 开始充电 / UC-U-08 计费 / UC-U-09 结算
+// TODO：UC-U-07 POST /charging/start  /  UC-U-08 遥测  /  UC-U-09 POST /charging/settle
 
 } // namespace ChargeService
 

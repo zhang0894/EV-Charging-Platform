@@ -1,63 +1,73 @@
 #include "core/chargeservice.h"
 
-#include <QSqlQuery>
-#include <QVariant>
+#include "core/apiclient.h"
+#include "core/session.h"
+
+
+#include <QDateTime>
+#include <QJsonArray>
+#include <QJsonObject>
 
 namespace ChargeService {
 
-int timeScale()
+bool devLogin(QString *err)
 {
-    bool ok = false;
-    const int v = qEnvironmentVariable("NCS_TIME_SCALE").toInt(&ok);
-    return (ok && v > 0) ? v : 60;
-}
+    QString phone = qEnvironmentVariable("NCS_PHONE");
+    if (phone.isEmpty())
+        phone = QStringLiteral("13866667777");
 
-double minStartBalance() { return 5.0; }   // 说明书 BR-04：最低起充金额
+    const QJsonObject body{{QStringLiteral("phone"), phone},
+                           {QStringLiteral("auth_type"), QStringLiteral("passwordless")}};
+    QJsonObject data;
+    if (!Api::post(QStringLiteral("/api/v1/auth/login"), body, &data, err))
+        return false;
+    Session::i().setUserId(data.value(QStringLiteral("user_id")).toInt());
+    Session::i().setToken(data.value(QStringLiteral("access_token")).toString());
+    return true;
+}
 
 bool findUnfinished(int userId, ActiveOrder *out)
 {
-    // 数据库负责人 03_queries.sql A7：status 0/1 都算「未完成」
-    QSqlQuery q;
-    q.prepare(QStringLiteral(
-        "SELECT id, pile_id, pile_code, station_name, start_time, unit_price,"
-        "       status, duration_min, kwh, amount "
-        "FROM v_order_detail WHERE user_id = ? AND status IN (0,1) "
-        "ORDER BY start_time DESC LIMIT 1"));
-    q.addBindValue(userId);
-    if (!q.exec() || !q.next())
+    Q_UNUSED(userId);          // 云端靠 token 识别用户，参数只为兼容界面签名
+    QJsonObject data;
+    if (!Api::get(QStringLiteral("/api/v1/charging/active-order"), &data))
+        return false;
+    if (!data.value(QStringLiteral("has_active_order")).toBool())
         return false;
 
-    out->id          = q.value(0).toInt();
-    out->pileId      = q.value(1).toInt();
-    out->pileCode    = q.value(2).toString();
-    out->stationName = q.value(3).toString();
-    out->startTime   = q.value(4).toString();
-    out->unitPrice   = q.value(5).toDouble();
-    out->status      = q.value(6).toInt();
-    out->durationMin = q.value(7).toInt();
-    out->kwh         = q.value(8).toDouble();
-    out->amount      = q.value(9).toDouble();
-
-    QSqlQuery p;
-    p.prepare(QStringLiteral("SELECT power_kw FROM piles WHERE id = ?"));
-    p.addBindValue(out->pileId);
-    if (p.exec() && p.next())
-        out->powerKw = p.value(0).toDouble();
+    const QJsonObject o = data.value(QStringLiteral("active_order")).toObject();
+    out->id          = o.value(QStringLiteral("order_id")).toString();
+    out->stationName = o.value(QStringLiteral("station_name")).toString();
+    out->pileCode    = o.value(QStringLiteral("pile_id")).toString();
+    out->startTime   = QDateTime::fromMSecsSinceEpoch(
+                           qint64(o.value(QStringLiteral("start_time")).toDouble()))
+                           .toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+    out->status      = o.value(QStringLiteral("order_status")).toString()
+                               == QStringLiteral("CHARGING") ? 0 : 1;
+    out->kwh         = o.value(QStringLiteral("charged_energy_kwh")).toDouble();
+    out->amount      = o.value(QStringLiteral("current_cost")).toDouble();
     return true;
 }
 
 QList<StationOpt> stationOptions()
 {
+    // 软件模拟定位：server 种子数据在上海，先固定用上海市中心坐标
+    // 等 B 的定位下拉框接进来，把坐标换成用户选的区域即可
     QList<StationOpt> list;
-    QSqlQuery q(QStringLiteral(
-        "SELECT id, name, price, pile_free FROM v_station_overview ORDER BY id"));
-    while (q.next()) {
-        StationOpt s;
-        s.id        = q.value(0).toInt();
-        s.name      = q.value(1).toString();
-        s.price     = q.value(2).toDouble();
-        s.freeCount = q.value(3).toInt();
-        list << s;
+    QJsonObject data;
+    if (!Api::get(QStringLiteral("/api/v1/stations/nearby"
+                                 "?latitude=31.2304&longitude=121.4737"
+                                 "&radius_km=50&limit=20"), &data))
+        return list;
+    const QJsonArray arr = data.value(QStringLiteral("stations")).toArray();
+    for (const auto &v : arr) {
+        const QJsonObject s = v.toObject();
+        StationOpt o;
+        o.id        = s.value(QStringLiteral("station_id")).toInt();
+        o.name      = s.value(QStringLiteral("station_name")).toString();
+        o.price     = s.value(QStringLiteral("price_per_kwh")).toDouble();
+        o.freeCount = s.value(QStringLiteral("idle_piles")).toInt();
+        list << o;
     }
     return list;
 }
@@ -65,33 +75,22 @@ QList<StationOpt> stationOptions()
 QList<PileOpt> freePiles(int stationId)
 {
     QList<PileOpt> list;
-    QSqlQuery q;
-    q.prepare(QStringLiteral(
-        "SELECT id, code, type_text, power_kw FROM v_pile_detail "
-        "WHERE station_id = ? AND status = 0 ORDER BY power_kw DESC"));
-    q.addBindValue(stationId);
-    q.exec();
-    while (q.next()) {
-        PileOpt p;
-        p.id       = q.value(0).toInt();
-        p.code     = q.value(1).toString();
-        p.typeText = q.value(2).toString();
-        p.powerKw  = q.value(3).toDouble();
-        list << p;
+    QJsonObject data;
+    if (!Api::get(QStringLiteral("/api/v1/stations/%1").arg(stationId), &data))
+        return list;
+    const QJsonArray arr = data.value(QStringLiteral("piles")).toArray();
+    for (const auto &v : arr) {
+        const QJsonObject p = v.toObject();
+        if (p.value(QStringLiteral("status_code")).toInt() != 1)   // 1 = 空闲可用
+            continue;
+        PileOpt o;
+        o.id       = p.value(QStringLiteral("pile_id")).toString();
+        o.code     = p.value(QStringLiteral("pile_name")).toString();
+        o.typeText = p.value(QStringLiteral("type_desc")).toString();
+        o.powerKw  = p.value(QStringLiteral("max_power_kw")).toDouble();
+        list << o;
     }
     return list;
-}
-
-int devDefaultUser()
-{
-    QSqlQuery q(QStringLiteral(
-        "SELECT id FROM users WHERE status = 0 AND balance >= 20 "
-        "AND id NOT IN (SELECT user_id FROM orders WHERE status IN (0,1)) "
-        "ORDER BY id LIMIT 1"));
-    if (q.next())
-        return q.value(0).toInt();
-    QSqlQuery fix(QStringLiteral("UPDATE users SET balance = 100 WHERE id = 1"));
-    return 1;
 }
 
 } // namespace ChargeService
