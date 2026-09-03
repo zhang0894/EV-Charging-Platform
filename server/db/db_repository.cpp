@@ -1,4 +1,5 @@
 #include "db_repository.hpp"
+#include "../cache/redis_cache.hpp"
 #include <format>
 #include <iostream>
 #include <sstream>
@@ -15,7 +16,7 @@ DbRepository& DbRepository::instance() {
 // ==========================================
 
 Result<UserModel> DbRepository::get_user_by_id(int64_t user_id) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     std::string sql = std::format("SELECT user_id, phone, password_hash, nickname, avatar_url, role, status, created_at, updated_at FROM users WHERE user_id = {};", user_id);
@@ -39,7 +40,7 @@ Result<UserModel> DbRepository::get_user_by_id(int64_t user_id) {
 }
 
 Result<UserModel> DbRepository::get_user_by_phone(std::string_view phone) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     std::string sql = std::format("SELECT user_id, phone, password_hash, nickname, avatar_url, role, status, created_at, updated_at FROM users WHERE phone = '{}';", phone);
@@ -63,7 +64,7 @@ Result<UserModel> DbRepository::get_user_by_phone(std::string_view phone) {
 }
 
 Result<UserModel> DbRepository::get_user_by_account(std::string_view account) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     std::string sql = std::format("SELECT user_id, phone, password_hash, nickname, avatar_url, role, status, created_at, updated_at FROM users WHERE phone = '{}' OR nickname = '{}';", account, account);
@@ -197,7 +198,7 @@ Result<UserModel> DbRepository::create_user(
 }
 
 Result<void> DbRepository::update_user_nickname(int64_t user_id, std::string_view nickname) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_writer();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int64_t now = current_time_ms();
@@ -208,7 +209,7 @@ Result<void> DbRepository::update_user_nickname(int64_t user_id, std::string_vie
 }
 
 Result<std::string> DbRepository::update_user_avatar(int64_t user_id, std::string_view avatar_url) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_writer();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int64_t now = current_time_ms();
@@ -219,7 +220,7 @@ Result<std::string> DbRepository::update_user_avatar(int64_t user_id, std::strin
 }
 
 Result<void> DbRepository::update_user_status(int64_t user_id, int status) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_writer();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int64_t now = current_time_ms();
@@ -235,7 +236,7 @@ Result<UserAdminListResponseData> DbRepository::get_users_admin_paged(
     std::string_view phone_filter,
     int status_filter
 ) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int offset = (page - 1) * page_size;
@@ -269,6 +270,7 @@ Result<UserAdminListResponseData> DbRepository::get_users_admin_paged(
     for (int i = 0; i < res.rows(); ++i) {
         int64_t b_cents = std::stoll(res.value(i, 3));
         int st = std::stoi(res.value(i, 4));
+
         data.users.push_back(UserAdminItemDTO{
             .user_id = std::stoll(res.value(i, 0)),
             .phone = res.value(i, 1),
@@ -289,7 +291,7 @@ Result<UserAdminListResponseData> DbRepository::get_users_admin_paged(
 // ==========================================
 
 Result<UserWalletModel> DbRepository::get_wallet(int64_t user_id) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     std::string sql = std::format("SELECT user_id, balance_cents, frozen_cents, status, updated_at FROM user_wallets WHERE user_id = {};", user_id);
@@ -392,7 +394,7 @@ Result<TransactionListResponseData> DbRepository::get_transactions_paged(
     int page_size,
     int flow_type
 ) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int offset = (page - 1) * page_size;
@@ -490,7 +492,7 @@ Result<UserWalletAdjustResponseData> DbRepository::adjust_user_wallet(
 // ==========================================
 
 Result<std::vector<StationModel>> DbRepository::get_all_stations() {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     std::string sql = "SELECT station_id, station_name, address, latitude, longitude, contact_phone, operating_hours, price_per_kwh, service_fee_per_kwh, overtime_fee_per_15min, overtime_grace_minutes, status, created_at, updated_at FROM stations ORDER BY station_id ASC;";
@@ -520,7 +522,7 @@ Result<std::vector<StationModel>> DbRepository::get_all_stations() {
 }
 
 Result<StationModel> DbRepository::get_station_by_id(int64_t station_id) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     std::string sql = std::format("SELECT station_id, station_name, address, latitude, longitude, contact_phone, operating_hours, price_per_kwh, service_fee_per_kwh, overtime_fee_per_15min, overtime_grace_minutes, status, created_at, updated_at FROM stations WHERE station_id = {};", station_id);
@@ -551,7 +553,7 @@ Result<StationAdminListResponseData> DbRepository::get_stations_admin_paged(
     std::string_view name_filter,
     int status_filter
 ) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int offset = (page - 1) * page_size;
@@ -614,7 +616,7 @@ Result<StationAdminListResponseData> DbRepository::get_stations_admin_paged(
 }
 
 Result<int64_t> DbRepository::create_station(const CreateStationRequest& req) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_writer();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int64_t now = current_time_ms();
@@ -630,7 +632,7 @@ Result<int64_t> DbRepository::create_station(const CreateStationRequest& req) {
 }
 
 Result<void> DbRepository::update_station(int64_t station_id, const UpdateStationRequest& req) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_writer();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int64_t now = current_time_ms();
@@ -645,7 +647,7 @@ Result<void> DbRepository::update_station(int64_t station_id, const UpdateStatio
 }
 
 Result<void> DbRepository::delete_station(int64_t station_id) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_writer();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     std::string sql = std::format("DELETE FROM stations WHERE station_id = {};", station_id);
@@ -658,7 +660,7 @@ Result<StationSalesStatsResponseData> DbRepository::get_station_sales_stats(int6
     auto st_res = get_station_by_id(station_id);
     if (!st_res) return std::unexpected(AppError::StationNotFound);
 
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int64_t now = current_time_ms();
@@ -735,8 +737,38 @@ Result<StationSalesStatsResponseData> DbRepository::get_station_sales_stats(int6
 // 4. 充电桩管理
 // ==========================================
 
+Result<std::vector<PileModel>> DbRepository::get_all_piles() {
+    auto conn = DbPool::instance().acquire_reader();
+    if (!conn) return std::unexpected(AppError::DatabaseError);
+
+    std::string sql = "SELECT pile_id, station_id, pile_name, type, gun_type, max_power_kw, voltage_range, status, total_charge_count, total_charge_hours, last_heartbeat_at, created_at, updated_at FROM piles;";
+    PgResultGuard res(conn->exec(sql.c_str()));
+    if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
+
+    std::vector<PileModel> piles;
+    piles.reserve(res.rows());
+    for (int i = 0; i < res.rows(); ++i) {
+        piles.push_back(PileModel{
+            .pile_id = res.value(i, 0),
+            .station_id = std::stoll(res.value(i, 1)),
+            .pile_name = res.value(i, 2),
+            .type = res.value(i, 3),
+            .gun_type = res.value(i, 4),
+            .max_power_kw = std::stod(res.value(i, 5)),
+            .voltage_range = res.value(i, 6),
+            .status = res.value(i, 7),
+            .total_charge_count = std::stoll(res.value(i, 8)),
+            .total_charge_hours = std::stod(res.value(i, 9)),
+            .last_heartbeat_at = std::stoll(res.value(i, 10)),
+            .created_at = std::stoll(res.value(i, 11)),
+            .updated_at = std::stoll(res.value(i, 12))
+        });
+    }
+    return piles;
+}
+
 Result<std::vector<PileModel>> DbRepository::get_piles_by_station(int64_t station_id) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     std::string sql = std::format(
@@ -771,7 +803,7 @@ Result<std::vector<PileModel>> DbRepository::get_piles_by_station(int64_t statio
 }
 
 Result<PileModel> DbRepository::get_pile_by_id(std::string_view pile_id) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     std::string sql = std::format(
@@ -807,7 +839,7 @@ Result<PileAdminListResponseData> DbRepository::get_piles_admin_paged(
     std::string_view status_filter,
     std::string_view type_filter
 ) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int offset = (page - 1) * page_size;
@@ -871,7 +903,7 @@ Result<PileAdminListResponseData> DbRepository::get_piles_admin_paged(
 }
 
 Result<void> DbRepository::create_pile(const CreatePileRequest& req) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_writer();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int64_t now = current_time_ms();
@@ -887,7 +919,7 @@ Result<void> DbRepository::create_pile(const CreatePileRequest& req) {
 }
 
 Result<void> DbRepository::update_pile_status(std::string_view pile_id, std::string_view status) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_writer();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int64_t now = current_time_ms();
@@ -898,7 +930,7 @@ Result<void> DbRepository::update_pile_status(std::string_view pile_id, std::str
 }
 
 Result<void> DbRepository::update_pile_metrics(std::string_view pile_id, int64_t add_count, double add_hours) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_writer();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int64_t now = current_time_ms();
@@ -913,7 +945,7 @@ Result<void> DbRepository::update_pile_metrics(std::string_view pile_id, int64_t
 // ==========================================
 
 Result<std::optional<OrderModel>> DbRepository::get_active_order_by_user(int64_t user_id) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     std::string sql = std::format(
@@ -965,7 +997,7 @@ Result<std::optional<OrderModel>> DbRepository::get_active_order_by_user(int64_t
 }
 
 Result<OrderModel> DbRepository::get_order_by_id(std::string_view order_id) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     std::string sql = std::format(
@@ -1089,7 +1121,7 @@ Result<SettleOrderResponseData> DbRepository::settle_order_with_wallet(
     std::string_view order_id,
     std::string_view idempotent_key
 ) {
-    return DbPool::instance().with_transaction([&](DbConnection& conn) -> Result<SettleOrderResponseData> {
+    auto res = DbPool::instance().with_transaction([&](DbConnection& conn) -> Result<SettleOrderResponseData> {
         // 锁定订单行
         std::string o_sql = std::format("SELECT user_id, order_status, total_fee_cents, electricity_fee_cents, service_fee_cents, overtime_fee_cents FROM charging_orders WHERE order_id = '{}' FOR UPDATE;", order_id);
         PgResultGuard o_res(conn.exec(o_sql.c_str()));
@@ -1172,6 +1204,12 @@ Result<SettleOrderResponseData> DbRepository::settle_order_with_wallet(
             .settled_at = now
         };
     });
+
+    if (res) {
+        RedisCache::instance().del_prefix("cache:dashboard:");
+        RedisCache::instance().del_prefix("cache:station:");
+    }
+    return res;
 }
 
 Result<OrderListResponseData> DbRepository::get_user_orders_paged(
@@ -1181,7 +1219,7 @@ Result<OrderListResponseData> DbRepository::get_user_orders_paged(
     std::string_view status_filter,
     std::string_view sort_order
 ) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int offset = (page - 1) * page_size;
@@ -1250,7 +1288,7 @@ Result<OrderListResponseData> DbRepository::get_orders_admin_paged(
     std::string_view start_date,
     std::string_view end_date
 ) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int offset = (page - 1) * page_size;
@@ -1342,7 +1380,7 @@ Result<AdminOrderRefundResponseData> DbRepository::refund_order_with_wallet(
     std::string_view idempotent_key,
     std::string_view reason
 ) {
-    return DbPool::instance().with_transaction([&](DbConnection& conn) -> Result<AdminOrderRefundResponseData> {
+    auto res = DbPool::instance().with_transaction([&](DbConnection& conn) -> Result<AdminOrderRefundResponseData> {
         // 锁定订单行
         std::string o_sql = std::format("SELECT user_id, order_status, total_fee_cents FROM charging_orders WHERE order_id = '{}' FOR UPDATE;", order_id);
         PgResultGuard o_res(conn.exec(o_sql.c_str()));
@@ -1401,6 +1439,12 @@ Result<AdminOrderRefundResponseData> DbRepository::refund_order_with_wallet(
             .refunded_at = now
         };
     });
+
+    if (res) {
+        RedisCache::instance().del_prefix("cache:dashboard:");
+        RedisCache::instance().del_prefix("cache:station:");
+    }
+    return res;
 }
 
 // ==========================================
@@ -1408,7 +1452,7 @@ Result<AdminOrderRefundResponseData> DbRepository::refund_order_with_wallet(
 // ==========================================
 
 Result<AdminDashboardSummaryData> DbRepository::get_admin_dashboard_summary() {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int64_t now = current_time_ms();
@@ -1454,7 +1498,7 @@ Result<AdminDashboardSummaryData> DbRepository::get_admin_dashboard_summary() {
 }
 
 Result<AdminRevenueTrendData> DbRepository::get_admin_revenue_trend(int days) {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int64_t now = current_time_ms();
@@ -1496,7 +1540,7 @@ Result<AdminRevenueTrendData> DbRepository::get_admin_revenue_trend(int days) {
 }
 
 Result<AdminPileStatusOverviewData> DbRepository::get_admin_pile_status_overview() {
-    auto conn = DbPool::instance().acquire();
+    auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     std::string sql = "SELECT status, COUNT(*) FROM piles GROUP BY status;";

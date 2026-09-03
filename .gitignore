@@ -3,5 +3,9 @@ boost_1_92_0
 server/build
 glaze-8.3.0
 server/cmake-build-debug
+server/benchmark
+server/build_bench
+server/build_standard
+progress-governor
 技术选型.md
 项目说明书.doc

@@ -48,6 +48,7 @@ public:
     // ==========================================
     // 4. 充电桩管理
     // ==========================================
+    Result<std::vector<PileModel>> get_all_piles();
     Result<std::vector<PileModel>> get_piles_by_station(int64_t station_id);
     Result<PileModel> get_pile_by_id(std::string_view pile_id);
     Result<PileAdminListResponseData> get_piles_admin_paged(int page, int page_size, int64_t station_id_filter = 0, std::string_view status_filter = "", std::string_view type_filter = "");

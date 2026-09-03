@@ -7,6 +7,7 @@
 #include "../db/db_repository.hpp"
 #include "../memory/rtree_index.hpp"
 #include "../memory/state_pool.hpp"
+#include "../cache/redis_cache.hpp"
 
 namespace ev {
 
@@ -51,26 +52,35 @@ public:
     }
 
     static http::response<http::string_body> handle_get_station_detail(int64_t station_id) {
-        auto st_res = DbRepository::instance().get_station_by_id(station_id);
-        if (!st_res) {
-            return make_error_response(st_res.error());
+        std::string cache_key = std::format("cache:station:model:{}", station_id);
+        auto cached_st = RedisCache::instance().get_json<StationModel>(cache_key);
+        StationModel st;
+        if (cached_st) {
+            st = *cached_st;
+        } else {
+            auto st_res = DbRepository::instance().get_station_by_id(station_id);
+            if (!st_res) {
+                return make_error_response(st_res.error());
+            }
+            st = *st_res;
+            RedisCache::instance().set_json(cache_key, st, 120); // 120s TTL
         }
 
         auto pool_piles = ChargingStatePool::instance().get_piles_by_station(station_id);
         auto summary = ChargingStatePool::instance().get_station_pile_summary(station_id);
 
         StationDetailResponseData data{
-            .station_id = st_res->station_id,
-            .station_name = st_res->station_name,
-            .address = st_res->address,
-            .latitude = st_res->latitude,
-            .longitude = st_res->longitude,
-            .contact_phone = st_res->contact_phone,
-            .operating_hours = st_res->operating_hours,
-            .price_per_kwh = st_res->price_per_kwh,
-            .service_fee_per_kwh = st_res->service_fee_per_kwh,
-            .overtime_fee_per_15min = st_res->overtime_fee_per_15min,
-            .overtime_grace_minutes = st_res->overtime_grace_minutes,
+            .station_id = st.station_id,
+            .station_name = st.station_name,
+            .address = st.address,
+            .latitude = st.latitude,
+            .longitude = st.longitude,
+            .contact_phone = st.contact_phone,
+            .operating_hours = st.operating_hours,
+            .price_per_kwh = st.price_per_kwh,
+            .service_fee_per_kwh = st.service_fee_per_kwh,
+            .overtime_fee_per_15min = st.overtime_fee_per_15min,
+            .overtime_grace_minutes = st.overtime_grace_minutes,
             .total_piles = summary.total_piles,
             .idle_piles = summary.idle_piles
         };
@@ -104,10 +114,18 @@ public:
     }
 
     static http::response<http::string_body> handle_get_sales_stats(int64_t station_id, std::string_view time_range) {
+        std::string cache_key = std::format("cache:station:{}:sales:{}", station_id, time_range);
+        auto cached = RedisCache::instance().get_json<StationSalesStatsResponseData>(cache_key);
+        if (cached) {
+            return make_success_response(*cached);
+        }
+
         auto res = DbRepository::instance().get_station_sales_stats(station_id, time_range);
         if (!res) {
             return make_error_response(res.error());
         }
+
+        RedisCache::instance().set_json(cache_key, *res, 10); // 10s TTL
         return make_success_response(*res);
     }
 };

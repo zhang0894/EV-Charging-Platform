@@ -4,6 +4,7 @@
 #include <format>
 #include <vector>
 #include <random>
+#include <string>
 
 namespace ev {
 
@@ -14,188 +15,213 @@ bool SeedDataGenerator::populate_if_empty() {
         return false;
     }
 
-    // 检查是否已存在管理员
+#ifdef BENCHMARK_MODE
+    constexpr int TARGET_USERS = 20000;       // 扩容 20 倍: 20,000 用户
+    constexpr int TARGET_STATIONS = 10000;    // 扩容 20 倍: 10,000 电站
+    constexpr int TARGET_PILES = 100000;      // 扩容 20 倍: 100,000 电桩
+    constexpr int TARGET_ORDERS = 200000;     // 扩容 20 倍: 200,000 订单
+
+    // 压测模式下检查电站数量是否达到 20 倍大规模 (>= 10,000)
+    PgResultGuard st_chk(conn->exec("SELECT COUNT(*) FROM stations;"));
+    if (st_chk.is_ok() && st_chk.rows() > 0 && std::stoll(st_chk.value(0, 0)) >= TARGET_STATIONS) {
+        std::cout << "[Seed] 20x Large-Scale Benchmark dataset already loaded (10,000 Stations, 100,000 Piles, 20,000 Users, 200,000 Orders). Skipping seed.\n";
+        return true;
+    }
+
+    std::cout << "[Seed] >>> [20x BENCHMARK MODE] Initializing Super Large Dataset:\n"
+              << "       - 10,000 Charging Stations\n"
+              << "       - 100,000 Charging Piles\n"
+              << "       - 20,000 User Accounts & Wallets\n"
+              << "       - 200,000 Historical Orders & Financial Ledgers...\n";
+#else
+    constexpr int TARGET_USERS = 50;
+    constexpr int TARGET_STATIONS = 25;
+    constexpr int TARGET_PILES = 250;
+    constexpr int TARGET_ORDERS = 120;
+
+    // 正常模式下检查是否已存在数据
     PgResultGuard chk(conn->exec("SELECT COUNT(*) FROM users WHERE role = 'admin';"));
     if (chk.is_ok() && chk.rows() > 0 && std::stoll(chk.value(0, 0)) > 0) {
         std::cout << "[Seed] Database already seeded. Skipping initial data population.\n";
         return true;
     }
 
-    std::cout << "[Seed] Starting medium-scale seed data generation (25 Stations, 250 Piles, 50 Users, Historical Orders)...\n";
+    std::cout << "[Seed] Starting standard seed data generation (25 Stations, 250 Piles, 50 Users, Historical Orders)...\n";
+#endif
 
     int64_t now = current_time_ms();
 
     // 1. 初始化管理员 (admin / 123456)
     std::string admin_sql = std::format(
         "INSERT INTO users (phone, password_hash, nickname, avatar_url, role, status, created_at, updated_at) "
-        "VALUES ('13900000000', '123456', '超级管理员', 'http://localhost:8080/static/avatars/admin.png', 'admin', 1, {}, {}) RETURNING user_id;",
-        now - 864000000LL, now - 864000000LL
+        "VALUES ('13900000000', '123456', '超级管理员', 'http://localhost:8080/static/avatars/admin.png', 'admin', 1, {}, {}) "
+        "ON CONFLICT (phone) DO UPDATE SET updated_at = {} RETURNING user_id;",
+        now - 864000000LL, now - 864000000LL, now
     );
     PgResultGuard a_res(conn->exec(admin_sql.c_str()));
     if (a_res.is_ok() && a_res.rows() > 0) {
         int64_t admin_uid = std::stoll(a_res.value(0, 0));
         std::string a_w = std::format(
-            "INSERT INTO user_wallets (user_id, balance_cents, frozen_cents, status, updated_at) VALUES ({}, 99999900, 0, 1, {});",
+            "INSERT INTO user_wallets (user_id, balance_cents, frozen_cents, status, updated_at) VALUES ({}, 99999900, 0, 1, {}) "
+            "ON CONFLICT (user_id) DO NOTHING;",
             admin_uid, now
         );
         conn->exec(a_w.c_str());
     }
 
-    // 2. 批量生成 50 名测试用户
-    std::vector<int64_t> created_user_ids;
-    for (int i = 1; i <= 50; ++i) {
-        std::string phone = std::format("138{:08d}", i);
-        std::string nick = std::format("车主_{:04d}", i);
-        int64_t reg_time = now - (static_cast<int64_t>(i) * 3600000LL * 8);
+    // 2. 批量高性能生成用户 (TARGET_USERS)
+    std::cout << "  -> Bulk inserting " << TARGET_USERS << " user accounts and wallets...\n";
+    constexpr int USER_BATCH = 1000;
+    for (int batch = 0; batch < TARGET_USERS; batch += USER_BATCH) {
+        int end_u = std::min(batch + USER_BATCH, TARGET_USERS);
+        std::string u_batch_sql = "INSERT INTO users (phone, password_hash, nickname, avatar_url, role, status, created_at, updated_at) VALUES ";
+        std::string w_batch_sql = "INSERT INTO user_wallets (user_id, balance_cents, frozen_cents, status, updated_at) VALUES ";
 
-        std::string u_sql = std::format(
-            "INSERT INTO users (phone, password_hash, nickname, avatar_url, role, status, created_at, updated_at) "
-            "VALUES ('{}', '123456', '{}', 'http://localhost:8080/static/avatars/default.png', 'user', 1, {}, {}) RETURNING user_id;",
-            phone, nick, reg_time, reg_time
-        );
-        PgResultGuard u_res(conn->exec(u_sql.c_str()));
-        if (u_res.is_ok() && u_res.rows() > 0) {
-            int64_t uid = std::stoll(u_res.value(0, 0));
-            created_user_ids.push_back(uid);
+        for (int i = batch + 1; i <= end_u; ++i) {
+            std::string phone = std::format("138{:08d}", i);
+            std::string nick = std::format("车主_{:05d}", i);
+            int64_t reg_time = now - (static_cast<int64_t>(i % 30) * 86400000LL);
 
-            int64_t init_balance = (100 + (i % 50) * 10) * 100; // 100 ~ 600 元
-            std::string w_sql = std::format(
-                "INSERT INTO user_wallets (user_id, balance_cents, frozen_cents, status, updated_at) VALUES ({}, {}, 0, 1, {});",
-                uid, init_balance, reg_time
-            );
-            conn->exec(w_sql.c_str());
-
-            // 初始充值流水
-            std::string tx_id = std::format("TX_INIT_{}_{}", reg_time, uid);
-            std::string f_sql = std::format(
-                "INSERT INTO wallet_transaction_flows (id, user_id, flow_type, amount_cents, balance_before_cents, balance_after_cents, related_order_id, operator_id, remark, idempotent_key, created_at) "
-                "VALUES ('{}', {}, 1, {}, 0, {}, '', 0, '系统初始化充值', 'INIT_KEY_{}', {});",
-                tx_id, uid, init_balance, init_balance, uid, reg_time
-            );
-            conn->exec(f_sql.c_str());
+            if (i > batch + 1) u_batch_sql += ", ";
+            u_batch_sql += std::format("('{}', '123456', '{}', 'http://localhost:8080/static/avatars/default.png', 'user', 1, {}, {})",
+                                       phone, nick, reg_time, reg_time);
         }
+        u_batch_sql += " ON CONFLICT (phone) DO NOTHING;";
+
+        DbPool::instance().with_transaction([&](DbConnection& tx_conn) -> Result<void> {
+            tx_conn.exec(u_batch_sql.c_str());
+            return {};
+        });
     }
 
-    // 3. 批量生成 25 个充电站 (分布在城市中心与环线周围)
-    struct StationPreset {
-        const char* name;
-        const char* address;
-        double lat;
-        double lng;
-        double price;
-        double service;
+    // 批量初始化钱包
+    std::string init_wallets_sql = std::format(
+        "INSERT INTO user_wallets (user_id, balance_cents, frozen_cents, status, updated_at) "
+        "SELECT user_id, 20000, 0, 1, {} FROM users WHERE role = 'user' ON CONFLICT (user_id) DO NOTHING;",
+        now
+    );
+    DbPool::instance().with_transaction([&](DbConnection& tx_conn) -> Result<void> {
+        tx_conn.exec(init_wallets_sql.c_str());
+        return {};
+    });
+
+    // 3. 批量生成充电站 (TARGET_STATIONS) 与 充电桩 (TARGET_PILES)
+    std::cout << "  -> Bulk inserting " << TARGET_STATIONS << " charging stations and " << TARGET_PILES << " charging piles...\n";
+
+    std::mt19937 rng(1337);
+    std::uniform_real_distribution<double> lat_dist(30.0000, 32.5000);
+    std::uniform_real_distribution<double> lon_dist(120.0000, 122.5000);
+    std::uniform_real_distribution<double> price_dist(1.20, 1.95);
+    std::uniform_real_distribution<double> serv_dist(0.30, 0.50);
+
+    const std::vector<std::string> prefix_names = {
+        "高新科技园", "智慧网联", "超级快充港", "液冷超充示范站", "金融贸易区",
+        "交通枢纽", "万达广场", "科创示范区", "绿色出行", "生态充电港",
+        "大学城商业街", "滨江示范站", "太古里超充站", "奥特莱斯", "百联智充站"
     };
 
-    std::vector<StationPreset> preset_stations = {
-        {"东软高新科技园超级充电站", "高新区软件园中路1号", 31.235000, 121.478000, 1.45, 0.35},
-        {"金融中心地下智慧充电站", "陆家嘴金融贸易区88号地下B2层", 31.240100, 121.490000, 1.80, 0.50},
-        {"虹桥枢纽超级快充站", "申昆路1500号虹桥枢纽P9停车场", 31.192000, 121.320000, 1.60, 0.40},
-        {"张江科学城液冷超充港", "张江高科技园区博云路2号", 31.205000, 121.590000, 1.50, 0.35},
-        {"徐家汇商圈地下充电港", "肇嘉浜路1111号美罗城B3", 31.195000, 121.436000, 1.75, 0.45},
-        {"五角场万达广场超充站", "国宾路36号万达广场地下B2", 31.300000, 121.515000, 1.55, 0.35},
-        {"临港新片区重卡与客车快充站", "临港新片区环湖西一路99号", 30.890000, 121.920000, 1.20, 0.30},
-        {"静安大悦城智慧充电港", "西藏北路166号大悦城南楼B3", 31.246000, 121.474000, 1.65, 0.45},
-        {"浦东国际机场P4航站楼充电站", "浦东国际机场P4长租停车场1层", 31.144000, 121.808000, 1.50, 0.40},
-        {"宝山智慧湾科创园充电站", "蕰川路6号智慧湾园区南门", 31.340000, 121.430000, 1.35, 0.30},
-        {"嘉定汽车城智能网联充电站", "安亭镇博园路7575号", 31.285000, 121.165000, 1.40, 0.35},
-        {"松江大学城文汇路快充站", "文汇路800弄大学城商业街", 31.045000, 121.215000, 1.30, 0.30},
-        {"闵行七宝万科城市充电港", "漕宝路3366号七宝万科广场B2", 31.155000, 121.355000, 1.60, 0.40},
-        {"普陀环球港大型超充站", "中山北路3300号环球港地下车库B3", 31.233000, 121.412000, 1.70, 0.45},
-        {"杨浦滨江绿能示范站", "杨树浦路1088号滨江国际广场", 31.258000, 121.530000, 1.45, 0.35},
-        {"青浦奥特莱斯快充站", "沪青平公路2888号奥特莱斯停车场", 31.135000, 121.205000, 1.40, 0.35},
-        {"奉贤南桥百联充电站", "南桥镇百齐路588号百联南桥购物中心", 30.915000, 121.465000, 1.35, 0.30},
-        {"金山石化万达超充站", "龙皓路1088号万达广场地下B2", 30.745000, 121.335000, 1.25, 0.30},
-        {"崇明陈家镇生态充电站", "陈家镇陈通路88号", 31.505000, 121.805000, 1.20, 0.30},
-        {"外滩SOHO地下绿色充电港", "中山东二路88号外滩SOHO B3", 31.231000, 121.488000, 1.90, 0.50},
-        {"北外滩白玉兰广场超充站", "东大名路501号白玉兰广场B3", 31.250000, 121.498000, 1.85, 0.50},
-        {"前滩太古里液冷超充示范站", "东育路500号前滩太古里B2", 31.156000, 121.480000, 1.80, 0.45},
-        {"大宁久光中心快充站", "大宁路400号久光百货地下车库", 31.272000, 121.450000, 1.65, 0.40},
-        {"真如中海环宇城充电港", "铜川路699号中海环宇城MAX B2", 31.255000, 121.398000, 1.60, 0.40},
-        {"莘庄龙之梦地下充电站", "沪闵路6088号莘庄龙之梦B3", 31.110000, 121.385000, 1.55, 0.35}
-    };
+    constexpr int STATION_BATCH = 500;
+    for (int batch = 0; batch < TARGET_STATIONS; batch += STATION_BATCH) {
+        int end_s = std::min(batch + STATION_BATCH, TARGET_STATIONS);
+        std::string s_batch_sql = "INSERT INTO stations (station_name, address, latitude, longitude, contact_phone, operating_hours, price_per_kwh, service_fee_per_kwh, overtime_fee_per_15min, overtime_grace_minutes, status, created_at, updated_at) VALUES ";
+        
+        for (int s = batch + 1; s <= end_s; ++s) {
+            std::string sname = std::format("{}_{:05d}号超级电站", prefix_names[s % prefix_names.size()], s);
+            std::string saddr = std::format("新能源大道{:05d}号", s);
+            double lat = lat_dist(rng);
+            double lon = lon_dist(rng);
+            double price = std::round(price_dist(rng) * 100.0) / 100.0;
+            double serv = std::round(serv_dist(rng) * 100.0) / 100.0;
 
-    std::vector<int64_t> created_station_ids;
-    std::vector<std::string> all_pile_ids;
+            if (s > batch + 1) s_batch_sql += ", ";
+            s_batch_sql += std::format("('{}', '{}', {:.5f}, {:.5f}, '021-88889999', '00:00 - 24:00', {:.2f}, {:.2f}, 5.00, 15, 1, {}, {})",
+                                       sname, saddr, lat, lon, price, serv, now - 864000000LL, now - 864000000LL);
+        }
+        s_batch_sql += " ON CONFLICT DO NOTHING;";
 
-    for (const auto& s : preset_stations) {
-        std::string s_sql = std::format(
-            "INSERT INTO stations (station_name, address, latitude, longitude, contact_phone, operating_hours, price_per_kwh, service_fee_per_kwh, overtime_fee_per_15min, overtime_grace_minutes, status, created_at, updated_at) "
-            "VALUES ('{}', '{}', {}, {}, '021-88889999', '00:00 - 24:00', {}, {}, 5.00, 15, 1, {}, {}) RETURNING station_id;",
-            s.name, s.address, s.lat, s.lng, s.price, s.service, now - 864000000LL, now - 864000000LL
-        );
-        PgResultGuard s_res(conn->exec(s_sql.c_str()));
-        if (s_res.is_ok() && s_res.rows() > 0) {
-            int64_t sid = std::stoll(s_res.value(0, 0));
-            created_station_ids.push_back(sid);
+        DbPool::instance().with_transaction([&](DbConnection& tx_conn) -> Result<void> {
+            tx_conn.exec(s_batch_sql.c_str());
+            return {};
+        });
 
-            // 每个充电站生成 10 个充电桩 (共 25 * 10 = 250 桩)
+        // 对应生成充电桩
+        std::string p_batch_sql = "INSERT INTO piles (pile_id, station_id, pile_name, type, gun_type, max_power_kw, voltage_range, status, total_charge_count, total_charge_hours, last_heartbeat_at, created_at, updated_at) VALUES ";
+        bool first_p = true;
+        for (int s = batch + 1; s <= end_s; ++s) {
             for (int p = 1; p <= 10; ++p) {
-                std::string pid = std::format("P{:03d}{:02d}", sid, p);
+                std::string pid = std::format("P{:05d}{:02d}", s, p);
                 std::string p_type = (p <= 7) ? "FAST" : "SLOW";
                 double p_kw = (p <= 7) ? ((p <= 2) ? 240.0 : 120.0) : 7.0;
                 std::string p_name = std::format("{:02d}号{}桩", p, (p <= 7 ? "直流快充" : "交流慢充"));
-                std::string status = (p == 10) ? "FAULT" : ((p % 3 == 0) ? "CHARGING" : "IDLE");
+                std::string status = (p == 10) ? "FAULT" : ((p % 4 == 0) ? "CHARGING" : "IDLE");
 
-                std::string p_sql = std::format(
-                    "INSERT INTO piles (pile_id, station_id, pile_name, type, gun_type, max_power_kw, voltage_range, status, total_charge_count, total_charge_hours, last_heartbeat_at, created_at, updated_at) "
-                    "VALUES ('{}', {}, '{}', '{}', '国标2015', {}, '200V-750V', '{}', {}, {}, {}, {}, {});",
-                    pid, sid, p_name, p_type, p_kw, status, (p * 50), (p * 80.5), now, now - 864000000LL, now
-                );
-                conn->exec(p_sql.c_str());
-                all_pile_ids.push_back(pid);
+                if (!first_p) p_batch_sql += ", ";
+                p_batch_sql += std::format("('{}', {}, '{}', '{}', '国标2015', {:.1f}, '200V-750V', '{}', {}, {:.1f}, {}, {}, {})",
+                                           pid, s, p_name, p_type, p_kw, status, (p * 50), (p * 80.5), now, now - 864000000LL, now);
+                first_p = false;
             }
         }
+        p_batch_sql += " ON CONFLICT (pile_id) DO NOTHING;";
+
+        DbPool::instance().with_transaction([&](DbConnection& tx_conn) -> Result<void> {
+            tx_conn.exec(p_batch_sql.c_str());
+            return {};
+        });
     }
 
-    // 4. 生成 100+ 条历史充电订单数据 (跨越过去 7 天与近一个月，供销售报表与历史查询测试)
-    std::mt19937 rng(42);
-    std::uniform_int_distribution<size_t> u_dist(0, created_user_ids.size() - 1);
-    std::uniform_int_distribution<size_t> s_dist(0, created_station_ids.size() - 1);
+    // 4. 批量生成 200,000 笔历史订单 (TARGET_ORDERS)
+    std::cout << "  -> Bulk inserting " << TARGET_ORDERS << " historical charging orders...\n";
+    constexpr int ORDER_BATCH = 2000;
+    std::uniform_int_distribution<int> u_dist(1, TARGET_USERS);
+    std::uniform_int_distribution<int> s_dist(1, TARGET_STATIONS);
     std::uniform_int_distribution<int> day_dist(0, 28);
     std::uniform_int_distribution<int> duration_dist(20, 80);
 
-    for (int i = 1; i <= 120; ++i) {
-        int64_t uid = created_user_ids[u_dist(rng)];
-        int64_t sid = created_station_ids[s_dist(rng)];
-        std::string pid = std::format("P{:03d}{:02d}", sid, (i % 9) + 1);
+    for (int batch = 0; batch < TARGET_ORDERS; batch += ORDER_BATCH) {
+        int end_o = std::min(batch + ORDER_BATCH, TARGET_ORDERS);
+        std::string ord_batch_sql = "INSERT INTO charging_orders (order_id, user_id, station_id, pile_id, strategy_type, strategy_value, order_status, start_time, end_time, start_soc, end_soc, charged_energy_kwh, electricity_price, electricity_fee_cents, service_price, service_fee_cents, overtime_grace_minutes, overtime_duration_minutes, overtime_rate_per_15min, overtime_fee_cents, total_fee_cents, stop_reason, settled_at, created_at, updated_at) VALUES ";
 
-        int days_ago = day_dist(rng);
-        int duration_mins = duration_dist(rng);
-        int64_t st = now - (static_cast<int64_t>(days_ago) * 86400000LL) - (i * 360000LL);
-        int64_t et = st + (duration_mins * 60000LL);
+        for (int i = batch + 1; i <= end_o; ++i) {
+            int uid = u_dist(rng);
+            int sid = s_dist(rng);
+            std::string pid = std::format("P{:05d}{:02d}", sid, (i % 9) + 1);
 
-        double kwh = 15.0 + (duration_mins * 0.45);
-        double elec_price = 1.45;
-        double serv_price = 0.35;
-        int64_t elec_fee_cents = yuan_to_cents(kwh * elec_price);
-        int64_t serv_fee_cents = yuan_to_cents(kwh * serv_price);
+            int days_ago = day_dist(rng);
+            int duration_mins = duration_dist(rng);
+            int64_t st = now - (static_cast<int64_t>(days_ago) * 86400000LL) - (i * 120000LL);
+            int64_t et = st + (duration_mins * 60000LL);
 
-        int overtime_mins = (duration_mins > 60) ? (duration_mins - 60) : 0;
-        int64_t overtime_fee_cents = (overtime_mins > 15) ? (yuan_to_cents(5.00 * ((overtime_mins - 1) / 15 + 1))) : 0;
-        int64_t total_fee_cents = elec_fee_cents + serv_fee_cents + overtime_fee_cents;
+            double kwh = 15.0 + (duration_mins * 0.45);
+            double elec_price = 1.45;
+            double serv_price = 0.35;
+            int64_t elec_fee_cents = yuan_to_cents(kwh * elec_price);
+            int64_t serv_fee_cents = yuan_to_cents(kwh * serv_price);
 
-        std::string oid = std::format("ORD_{:08d}", i);
-        std::string o_status = (i == 1) ? "CHARGING" : "COMPLETED";
+            int overtime_mins = (duration_mins > 60) ? (duration_mins - 60) : 0;
+            int64_t overtime_fee_cents = (overtime_mins > 15) ? (yuan_to_cents(5.00 * ((overtime_mins - 1) / 15 + 1))) : 0;
+            int64_t total_fee_cents = elec_fee_cents + serv_fee_cents + overtime_fee_cents;
 
-        std::string ord_sql = std::format(
-            "INSERT INTO charging_orders (order_id, user_id, station_id, pile_id, strategy_type, strategy_value, order_status, start_time, end_time, start_soc, end_soc, charged_energy_kwh, electricity_price, electricity_fee_cents, service_price, service_fee_cents, overtime_grace_minutes, overtime_duration_minutes, overtime_rate_per_15min, overtime_fee_cents, total_fee_cents, stop_reason, settled_at, created_at, updated_at) "
-            "VALUES ('{}', {}, {}, '{}', 'FULL', 0, '{}', {}, {}, 20, 100, {}, {}, {}, {}, {}, 15, {}, 5.00, {}, {}, 'USER_MANUAL_STOP', {}, {}, {});",
-            oid, uid, sid, pid, o_status, st, (o_status == "CHARGING" ? 0 : et), kwh, elec_price, elec_fee_cents, serv_price, serv_fee_cents, overtime_mins, overtime_fee_cents, total_fee_cents, (o_status == "CHARGING" ? 0 : et), st, et
-        );
-        conn->exec(ord_sql.c_str());
+            std::string oid = std::format("ORD_HST_{:08d}", i);
+            std::string o_status = (i % 50 == 0) ? "REFUNDED" : "COMPLETED";
 
-        if (o_status == "COMPLETED") {
-            std::string tx_id = std::format("TX_ORD_{}_{}", et, uid);
-            std::string flow_sql = std::format(
-                "INSERT INTO wallet_transaction_flows (id, user_id, flow_type, amount_cents, balance_before_cents, balance_after_cents, related_order_id, operator_id, remark, idempotent_key, created_at) "
-                "VALUES ('{}', {}, 2, {}, 50000, {}, '{}', 0, '充电历史扣费', 'ORD_IDEM_{}', {});",
-                tx_id, uid, -total_fee_cents, 50000 - total_fee_cents, oid, oid, et
-            );
-            conn->exec(flow_sql.c_str());
+            if (i > batch + 1) ord_batch_sql += ", ";
+            ord_batch_sql += std::format("('{}', {}, {}, '{}', 'FULL', 0, '{}', {}, {}, 20, 100, {:.2f}, {:.2f}, {}, {:.2f}, {}, 15, {}, 5.00, {}, {}, 'USER_MANUAL_STOP', {}, {}, {})",
+                                         oid, uid, sid, pid, o_status, st, et, kwh, elec_price, elec_fee_cents, serv_price, serv_fee_cents, overtime_mins, overtime_fee_cents, total_fee_cents, et, st, et);
         }
+        ord_batch_sql += " ON CONFLICT (order_id) DO NOTHING;";
+
+        DbPool::instance().with_transaction([&](DbConnection& tx_conn) -> Result<void> {
+            tx_conn.exec(ord_batch_sql.c_str());
+            return {};
+        });
     }
 
-    std::cout << "[Seed] Successfully seeded 1 Admin, 50 Users, 25 Stations, 250 Charging Piles, and 120 Historical Orders!\n";
+    std::cout << "[Seed] Successfully initialized 20x dataset:\n"
+              << "       - 10,000 Stations\n"
+              << "       - 100,000 Piles\n"
+              << "       - 20,000 Users\n"
+              << "       - 200,000 Orders!\n";
+
     return true;
 }
 

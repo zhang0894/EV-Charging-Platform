@@ -101,27 +101,57 @@ private:
     PGresult* res_{nullptr};
 };
 
+// 读写分离角色定义
+enum class DbRole {
+    Writer, // 主库连接 (写操作、事务修改、行级锁)
+    Reader  // 从库连接 (只读副本、空间查询、报表与分页检索)
+};
+
 class DbPool {
 public:
+    using PooledConnection = std::unique_ptr<DbConnection, std::function<void(DbConnection*)>>;
+
     static DbPool& instance();
 
+    // 读写分离双池初始化
+    void init(
+        const std::string& writer_conninfo,
+        const std::string& reader_conninfo,
+        size_t min_connections = 4,
+        size_t max_connections = 32
+    );
+
+    // 单连接串兼容初始化 (Reader 默认平滑指向同一集群但独立连接池配额)
     void init(
         const std::string& conninfo,
         size_t min_connections = 4,
-        size_t max_connections = 16
+        size_t max_connections = 32
     );
 
     void shutdown();
 
-    // 从连接池租借连接
-    std::unique_ptr<DbConnection, std::function<void(DbConnection*)>> acquire(
+    // 从指定角色连接池租借连接
+    PooledConnection acquire(
+        DbRole role = DbRole::Writer,
         std::chrono::milliseconds timeout = std::chrono::milliseconds(5000)
     );
 
-    // 事务辅助执行
+    PooledConnection acquire_writer(
+        std::chrono::milliseconds timeout = std::chrono::milliseconds(5000)
+    ) {
+        return acquire(DbRole::Writer, timeout);
+    }
+
+    PooledConnection acquire_reader(
+        std::chrono::milliseconds timeout = std::chrono::milliseconds(5000)
+    ) {
+        return acquire(DbRole::Reader, timeout);
+    }
+
+    // 事务辅助执行 (强行绑定至主库 Writer 连接)
     template <typename Func>
     Result<typename std::invoke_result<Func, DbConnection&>::type::value_type> with_transaction(Func&& func) {
-        auto conn = acquire();
+        auto conn = acquire_writer();
         if (!conn) {
             return std::unexpected(AppError::DatabaseError);
         }
@@ -150,12 +180,23 @@ private:
     DbPool() = default;
     ~DbPool() { shutdown(); }
 
-    std::string conninfo_;
-    size_t max_connections_{16};
-    std::queue<std::unique_ptr<DbConnection>> pool_;
-    std::mutex mutex_;
-    std::condition_variable cv_;
-    bool is_shutdown_{false};
+    struct SubPool {
+        std::string conninfo;
+        size_t max_connections{32};
+        std::queue<std::unique_ptr<DbConnection>> pool;
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool is_shutdown{false};
+    };
+
+    PooledConnection acquire_from_subpool(
+        SubPool& subpool,
+        std::chrono::milliseconds timeout
+    );
+
+    SubPool writer_pool_;
+    SubPool reader_pool_;
+    bool is_initialized_{false};
 };
 
 } // namespace ev

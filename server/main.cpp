@@ -5,6 +5,7 @@
 #include "memory/rtree_index.hpp"
 #include "memory/state_pool.hpp"
 #include "simulation/simulator.hpp"
+#include "cache/redis_cache.hpp"
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/signal_set.hpp>
@@ -38,31 +39,35 @@ int main(int argc, char* argv[]) {
     const std::string host = "0.0.0.0";
     const unsigned short port = 8080;
     const std::string db_conninfo = "host=127.0.0.1 port=5432 dbname=postgres user=postgres password=Express1.";
+    const char* env_read_conn = std::getenv("PG_READ_CONNINFO");
+    const std::string db_read_conninfo = env_read_conn ? env_read_conn : db_conninfo;
 
-    // 1. 初始化数据库连接池
-    std::println(">>> 1. 正在初始化 PostgreSQL 18 数据库连接池...");
-    ev::DbPool::instance().init(db_conninfo, 4, 16);
+    // 1. 初始化数据库读写分离连接池
+    std::println(">>> 1. 正在初始化 PostgreSQL 18 读写分离数据库连接池 (主库写池与只读副本读池)...");
+    ev::DbPool::instance().init(db_conninfo, db_read_conninfo, 8, 32);
 
-    // 2. 预置中等规模测试数据 (25 电站, 250 充电桩, 50 用户, 历史订单)
-    std::println(">>> 2. 检查并预置业务基础数据...");
+    // 2. 初始化 Redis 缓存中心
+    std::println(">>> 2. 正在初始化 Redis 实时/TTL 缓存组件...");
+    ev::RedisCache::instance().init("127.0.0.1", 6379);
+
+    // 3. 自动检查并预置初始数据
+    std::println(">>> 3. 正在检查并装载数据...");
     ev::SeedDataGenerator::populate_if_empty();
 
-    // 3. 构建内存 R-Tree 空间索引与实时状态池
-    std::println(">>> 3. 加载电站地理坐标至 R-Tree 空间索引与内存状态池...");
+    // 4. 构建 R-Tree 空间索引与电桩状态内存池
+    std::println(">>> 4. 正在构建 R-Tree 2D 空间几何索引与电桩内存状态池...");
     auto all_stations = ev::DbRepository::instance().get_all_stations();
-    if (all_stations) {
+    auto all_piles = ev::DbRepository::instance().get_all_piles();
+
+    if (all_stations && all_piles) {
         std::vector<std::pair<int64_t, std::pair<double, double>>> coords;
-        std::vector<ev::PileModel> all_piles;
+        coords.reserve(all_stations->size());
         for (const auto& s : *all_stations) {
             coords.emplace_back(s.station_id, std::make_pair(s.latitude, s.longitude));
-            auto piles = ev::DbRepository::instance().get_piles_by_station(s.station_id);
-            if (piles) {
-                all_piles.insert(all_piles.end(), piles->begin(), piles->end());
-            }
         }
-        ev::ChargingStatePool::instance().init_from_piles(all_piles);
+        ev::ChargingStatePool::instance().init_from_piles(*all_piles);
         ev::StationRTree::instance().build_index(coords);
-        std::println("  [OK] 成功构建 {} 个充电站 R-Tree 空间索引与 {} 个电桩状态池", coords.size(), all_piles.size());
+        std::println("  [OK] 成功构建 {} 个充电站 R-Tree 空间索引与 {} 个电桩状态池", coords.size(), all_piles->size());
     }
 
     try {

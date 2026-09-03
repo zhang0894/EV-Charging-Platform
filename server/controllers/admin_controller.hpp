@@ -8,6 +8,7 @@
 #include "../memory/state_pool.hpp"
 #include "../memory/rtree_index.hpp"
 #include "../websocket/ws_manager.hpp"
+#include "../cache/redis_cache.hpp"
 #include <glaze/glaze.hpp>
 
 namespace ev {
@@ -15,24 +16,56 @@ namespace ev {
 class AdminController {
 public:
     // ==========================================
-    // 1. 运营态势大盘
+    // 1. 运营态势大盘 (已接入 Redis 实时/TTL 缓存 + 防击穿 Single-Flight)
     // ==========================================
 
     static http::response<http::string_body> handle_get_dashboard_summary() {
+        const std::string cache_key = "cache:dashboard:summary";
+        auto cached = RedisCache::instance().get_json<AdminDashboardSummaryData>(cache_key);
+        if (cached) {
+            return make_success_response(*cached);
+        }
+
+        // 互斥锁防止高并发击穿 (Double-Checked Locking)
+        static std::mutex summary_mutex;
+        std::lock_guard<std::mutex> lk(summary_mutex);
+        cached = RedisCache::instance().get_json<AdminDashboardSummaryData>(cache_key);
+        if (cached) {
+            return make_success_response(*cached);
+        }
+
         auto res = DbRepository::instance().get_admin_dashboard_summary();
         if (!res) return make_error_response(res.error());
+
+        RedisCache::instance().set_json(cache_key, *res, 30); // 30s TTL
         return make_success_response(*res);
     }
 
     static http::response<http::string_body> handle_get_revenue_trend(int days) {
+        std::string cache_key = std::format("cache:dashboard:trend:{}", days);
+        auto cached = RedisCache::instance().get_json<AdminRevenueTrendData>(cache_key);
+        if (cached) {
+            return make_success_response(*cached);
+        }
+
         auto res = DbRepository::instance().get_admin_revenue_trend(days);
         if (!res) return make_error_response(res.error());
+
+        RedisCache::instance().set_json(cache_key, *res, 30); // 30s TTL
         return make_success_response(*res);
     }
 
     static http::response<http::string_body> handle_get_pile_status_overview() {
+        const std::string cache_key = "cache:admin:pile_status";
+        auto cached = RedisCache::instance().get_json<AdminPileStatusOverviewData>(cache_key);
+        if (cached) {
+            return make_success_response(*cached);
+        }
+
         auto res = DbRepository::instance().get_admin_pile_status_overview();
         if (!res) return make_error_response(res.error());
+
+        RedisCache::instance().set_json(cache_key, *res, 5); // 5s TTL
         return make_success_response(*res);
     }
 
