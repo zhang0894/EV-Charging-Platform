@@ -15,39 +15,23 @@ bool SeedDataGenerator::populate_if_empty() {
         return false;
     }
 
-#ifdef BENCHMARK_MODE
-    constexpr int TARGET_USERS = 20000;       // 扩容 20 倍: 20,000 用户
-    constexpr int TARGET_STATIONS = 10000;    // 扩容 20 倍: 10,000 电站
-    constexpr int TARGET_PILES = 100000;      // 扩容 20 倍: 100,000 电桩
-    constexpr int TARGET_ORDERS = 200000;     // 扩容 20 倍: 200,000 订单
+    constexpr int TARGET_USERS = 20000;       // 超大规模: 20,000 用户
+    constexpr int TARGET_STATIONS = 10000;    // 超大规模: 10,000 电站
+    constexpr int TARGET_PILES = 100000;      // 超大规模: 100,000 电桩
+    constexpr int TARGET_ORDERS = 200000;     // 超大规模: 200,000 订单
 
-    // 压测模式下检查电站数量是否达到 20 倍大规模 (>= 10,000)
+    // 检查电站数量是否达到超大规模 (>= 10,000)
     PgResultGuard st_chk(conn->exec("SELECT COUNT(*) FROM stations;"));
     if (st_chk.is_ok() && st_chk.rows() > 0 && std::stoll(st_chk.value(0, 0)) >= TARGET_STATIONS) {
-        std::cout << "[Seed] 20x Large-Scale Benchmark dataset already loaded (10,000 Stations, 100,000 Piles, 20,000 Users, 200,000 Orders). Skipping seed.\n";
+        std::cout << "[Seed] Large-scale dataset already loaded (10,000 Stations, 100,000 Piles, 20,000 Users, 200,000 Orders). Skipping seed.\n";
         return true;
     }
 
-    std::cout << "[Seed] >>> [20x BENCHMARK MODE] Initializing Super Large Dataset:\n"
+    std::cout << "[Seed] >>> Initializing Super Large Dataset:\n"
               << "       - 10,000 Charging Stations\n"
               << "       - 100,000 Charging Piles\n"
               << "       - 20,000 User Accounts & Wallets\n"
               << "       - 200,000 Historical Orders & Financial Ledgers...\n";
-#else
-    constexpr int TARGET_USERS = 50;
-    constexpr int TARGET_STATIONS = 25;
-    constexpr int TARGET_PILES = 250;
-    constexpr int TARGET_ORDERS = 120;
-
-    // 正常模式下检查是否已存在数据
-    PgResultGuard chk(conn->exec("SELECT COUNT(*) FROM users WHERE role = 'admin';"));
-    if (chk.is_ok() && chk.rows() > 0 && std::stoll(chk.value(0, 0)) > 0) {
-        std::cout << "[Seed] Database already seeded. Skipping initial data population.\n";
-        return true;
-    }
-
-    std::cout << "[Seed] Starting standard seed data generation (25 Stations, 250 Piles, 50 Users, Historical Orders)...\n";
-#endif
 
     int64_t now = current_time_ms();
 
@@ -109,8 +93,9 @@ bool SeedDataGenerator::populate_if_empty() {
     std::cout << "  -> Bulk inserting " << TARGET_STATIONS << " charging stations and " << TARGET_PILES << " charging piles...\n";
 
     std::mt19937 rng(1337);
-    std::uniform_real_distribution<double> lat_dist(30.0000, 32.5000);
-    std::uniform_real_distribution<double> lon_dist(120.0000, 122.5000);
+    // 北京境内经纬度分布 (北纬 39.4400° ~ 41.0500°, 东经 115.4200° ~ 117.5000°)
+    std::uniform_real_distribution<double> lat_dist(39.4400, 41.0500);
+    std::uniform_real_distribution<double> lon_dist(115.4200, 117.5000);
     std::uniform_real_distribution<double> price_dist(1.20, 1.95);
     std::uniform_real_distribution<double> serv_dist(0.30, 0.50);
 
@@ -134,7 +119,7 @@ bool SeedDataGenerator::populate_if_empty() {
             double serv = std::round(serv_dist(rng) * 100.0) / 100.0;
 
             if (s > batch + 1) s_batch_sql += ", ";
-            s_batch_sql += std::format("('{}', '{}', {:.5f}, {:.5f}, '021-88889999', '00:00 - 24:00', {:.2f}, {:.2f}, 5.00, 15, 1, {}, {})",
+            s_batch_sql += std::format("('{}', '{}', {:.5f}, {:.5f}, '010-88889999', '00:00 - 24:00', {:.2f}, {:.2f}, 5.00, 15, 1, {}, {})",
                                        sname, saddr, lat, lon, price, serv, now - 864000000LL, now - 864000000LL);
         }
         s_batch_sql += " ON CONFLICT DO NOTHING;";
@@ -216,7 +201,7 @@ bool SeedDataGenerator::populate_if_empty() {
         });
     }
 
-    std::cout << "[Seed] Successfully initialized 20x dataset:\n"
+    std::cout << "[Seed] Successfully initialized super large dataset:\n"
               << "       - 10,000 Stations\n"
               << "       - 100,000 Piles\n"
               << "       - 20,000 Users\n"

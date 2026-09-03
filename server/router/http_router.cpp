@@ -79,8 +79,8 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
     // 2. 充电站附近与详情接口 (公开或带鉴权)
     // ==========================================
     if (path == "/api/v1/stations/nearby" && method == http::verb::get) {
-        double lat = query.contains("latitude") ? std::stod(query["latitude"]) : 31.2304;
-        double lng = query.contains("longitude") ? std::stod(query["longitude"]) : 121.4737;
+        double lat = query.contains("latitude") ? std::stod(query["latitude"]) : 39.9042;
+        double lng = query.contains("longitude") ? std::stod(query["longitude"]) : 116.4074;
         double radius = query.contains("radius_km") ? std::stod(query["radius_km"]) : 10.0;
         size_t limit = query.contains("limit") ? std::stoul(query["limit"]) : 20;
         return StationController::handle_get_nearby_stations(lat, lng, radius, limit);

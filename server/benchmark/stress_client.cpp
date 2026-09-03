@@ -113,8 +113,8 @@ private:
     net::awaitable<void> worker_coroutine(net::io_context& ioc, int worker_id) {
         std::mt19937 rng(1337 + worker_id);
         std::uniform_int_distribution<int> type_dist(1, 100);
-        std::uniform_real_distribution<double> lat_dist(30.0000, 32.5000);
-        std::uniform_real_distribution<double> lon_dist(120.0000, 122.5000);
+        std::uniform_real_distribution<double> lat_dist(39.4400, 41.0500);
+        std::uniform_real_distribution<double> lon_dist(115.4200, 117.5000);
         std::uniform_int_distribution<int> station_dist(1, 10000); // 10,000 座电站
 
         tcp::resolver resolver(ioc);
