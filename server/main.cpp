@@ -35,7 +35,7 @@ net::awaitable<void> listener(tcp::acceptor& acceptor) {
 int main(int argc, char* argv[]) {
     std::println("\n=======================================================");
     std::println("   电动汽车充电桩管理平台 (EV Charging Platform) 服务端   ");
-    std::println("   C++23 | Boost.Asio/Beast | PostgreSQL 18 | Glaze     ");
+    std::println("      C++23 | Boost.Asio/Beast | PostgreSQL | Glaze     ");
     std::println("=======================================================\n");
 
     const std::string host = "0.0.0.0";
@@ -45,7 +45,7 @@ int main(int argc, char* argv[]) {
     const std::string db_read_conninfo = env_read_conn ? env_read_conn : db_conninfo;
 
     // 1. 初始化数据库读写分离连接池
-    std::println(">>> 1. 正在初始化 PostgreSQL 18 读写分离数据库连接池 (主库写池与只读副本读池)...");
+    std::println(">>> 1. 正在初始化 PostgreSQL 读写分离数据库连接池 (主库写池与只读副本读池)...");
     ev::DbPool::instance().init(db_conninfo, db_read_conninfo, 8, 32);
 
     // 2. 初始化 Redis 缓存中心
