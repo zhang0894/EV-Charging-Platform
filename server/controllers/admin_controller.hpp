@@ -9,6 +9,8 @@
 #include "../memory/rtree_index.hpp"
 #include "../websocket/ws_manager.hpp"
 #include "../cache/redis_cache.hpp"
+#include "../data/static_stations.hpp"
+#include "../memory/station_status_manager.hpp"
 #include <glaze/glaze.hpp>
 
 namespace ev {
@@ -79,56 +81,169 @@ public:
         std::string_view name_filter,
         int status_filter
     ) {
-        auto res = DbRepository::instance().get_stations_admin_paged(page, page_size, name_filter, status_filter);
-        if (!res) return make_error_response(res.error());
-        return make_success_response(*res);
-    }
+        if (page < 1) page = 1;
+        if (page_size < 1) page_size = 10;
+        if (page_size > 100) page_size = 100;
 
-    static http::response<http::string_body> handle_create_station(const http::request<http::string_body>& req) {
-        CreateStationRequest st_req;
-        auto err = glz::read_json(st_req, req.body());
-        if (err || st_req.station_name.empty()) {
-            return make_error_response(AppError::InvalidJsonPayload, "Missing station_name or invalid payload");
-        }
+        std::vector<int32_t> matched_ids;
+        matched_ids.reserve(STATIC_STATION_COUNT);
 
-        auto res = DbRepository::instance().create_station(st_req);
-        if (!res) return make_error_response(res.error());
+        for (const auto& s : STATIC_STATIONS) {
+            bool is_on = StationStatusManager::instance().is_online(s.station_id);
+            int st_status = is_on ? 1 : 2;
 
-        // 重建 R-Tree
-        auto all_st = DbRepository::instance().get_all_stations();
-        if (all_st) {
-            std::vector<std::pair<int64_t, std::pair<double, double>>> coords;
-            for (const auto& s : *all_st) {
-                coords.emplace_back(s.station_id, std::make_pair(s.latitude, s.longitude));
+            if (status_filter > 0 && st_status != status_filter) {
+                continue;
             }
-            StationRTree::instance().build_index(coords);
+
+            if (!name_filter.empty()) {
+                std::string_view sname = s.name;
+                std::string_view saddr = s.address;
+                if (sname.find(name_filter) == std::string_view::npos && saddr.find(name_filter) == std::string_view::npos) {
+                    continue;
+                }
+            }
+
+            matched_ids.push_back(s.station_id);
         }
 
-        struct CreateResp {
-            int64_t station_id;
+        int64_t total = matched_ids.size();
+        int64_t start_idx = static_cast<int64_t>(page - 1) * page_size;
+
+        StationAdminListResponseData resp{
+            .total = total,
+            .page = page,
+            .page_size = page_size,
+            .stations = {}
         };
-        return make_success_response(CreateResp{.station_id = *res});
-    }
 
-    static http::response<http::string_body> handle_update_station(
-        int64_t station_id,
-        const http::request<http::string_body>& req
-    ) {
-        UpdateStationRequest up_req;
-        auto err = glz::read_json(up_req, req.body());
-        if (err || up_req.station_name.empty()) {
-            return make_error_response(AppError::InvalidJsonPayload);
+        if (start_idx < total) {
+            int64_t end_idx = std::min(start_idx + page_size, total);
+            resp.stations.reserve(end_idx - start_idx);
+
+            for (int64_t i = start_idx; i < end_idx; ++i) {
+                int32_t sid = matched_ids[i];
+                const StaticStation* s = find_static_station(sid);
+                if (!s) continue;
+
+                auto summary = ChargingStatePool::instance().get_station_pile_summary(sid);
+                bool is_on = StationStatusManager::instance().is_online(sid);
+                double online_rate = (summary.total_piles > 0) ? (static_cast<double>(summary.total_piles - summary.fault_piles) / summary.total_piles * 100.0) : 100.0;
+
+                resp.stations.push_back(StationAdminItemDTO{
+                    .station_id = sid,
+                    .station_name = std::string(s->name),
+                    .address = std::string(s->address),
+                    .latitude = s->latitude,
+                    .longitude = s->longitude,
+                    .total_piles = summary.total_piles,
+                    .online_piles = summary.total_piles - summary.fault_piles,
+                    .idle_piles = summary.idle_piles,
+                    .online_rate = std::round(online_rate * 10.0) / 10.0,
+                    .price_per_kwh = 1.45,
+                    .service_fee_per_kwh = 0.35,
+                    .overtime_fee_per_15min = 5.00,
+                    .status = is_on ? 1 : 2,
+                    .created_at = 1772600000000LL
+                });
+            }
         }
 
-        auto res = DbRepository::instance().update_station(station_id, up_req);
-        if (!res) return make_error_response(res.error());
-        return make_empty_success_response();
+        return make_success_response(resp);
     }
 
-    static http::response<http::string_body> handle_delete_station(int64_t station_id) {
-        auto res = DbRepository::instance().delete_station(station_id);
-        if (!res) return make_error_response(res.error());
-        return make_empty_success_response();
+    static http::response<http::string_body> handle_online_station(int64_t station_id) {
+        if (station_id < 1 || station_id > static_cast<int64_t>(STATIC_STATION_COUNT)) {
+            return make_error_response(AppError::StationNotFound, "Station not found");
+        }
+
+        StationStatusManager::instance().set_online(station_id, true);
+        ChargingStatePool::instance().set_station_piles_online(station_id);
+
+        StationOnlineStatusResponseData resp{
+            .station_id = station_id,
+            .status = 1,
+            .is_online = true,
+            .terminated_orders = 0,
+            .message = "Station brought online successfully"
+        };
+        return make_success_response(resp);
+    }
+
+    static http::response<http::string_body> handle_offline_station(int64_t station_id) {
+        if (station_id < 1 || station_id > static_cast<int64_t>(STATIC_STATION_COUNT)) {
+            return make_error_response(AppError::StationNotFound, "Station not found");
+        }
+
+        // 1. 设置电站下线状态
+        StationStatusManager::instance().set_online(station_id, false);
+
+        // 2. 检索该电站下所有充电桩，若存在进行中的订单则同步强制结单与结算
+        auto piles = ChargingStatePool::instance().get_piles_by_station(station_id);
+        int terminated_count = 0;
+        int64_t now = current_time_ms();
+
+        for (const auto& p : piles) {
+            if (p.status == "CHARGING" || !p.active_order_id.empty()) {
+                std::string oid = p.active_order_id;
+                double energy = p.charged_energy_kwh;
+                int end_soc = p.current_soc;
+                int64_t elec_cents = p.electricity_fee_cents;
+                int64_t serv_cents = p.service_fee_cents;
+                int overtime_mins = p.overtime_duration_minutes;
+                int64_t overtime_cents = p.overtime_fee_cents;
+                int64_t total_cents = elec_cents + serv_cents + overtime_cents;
+
+                // 从内存池释放充电中标记
+                ChargingStatePool::instance().stop_charging(p.pile_id);
+
+                // 数据库更新订单状态为结束
+                DbRepository::instance().stop_order(
+                    oid,
+                    now,
+                    end_soc,
+                    energy,
+                    elec_cents,
+                    serv_cents,
+                    overtime_mins,
+                    overtime_cents,
+                    total_cents,
+                    "STATION_OFFLINE"
+                );
+
+                // 钱包同步扣款扣账结算
+                std::string idem = std::format("OFFLINE_SETTLE_{}_{}", oid, now);
+                DbRepository::instance().settle_order_with_wallet(oid, idem);
+
+                // 广播订单结束推送
+                WsManager::instance().broadcast_charging_finished(ChargingFinishedFrame{
+                    .event = "CHARGING_FINISHED",
+                    .order_id = oid,
+                    .pile_id = p.pile_id,
+                    .finish_reason = "STATION_OFFLINE",
+                    .total_energy_kwh = energy,
+                    .electricity_fee = cents_to_yuan(elec_cents),
+                    .service_fee = cents_to_yuan(serv_cents),
+                    .overtime_fee = cents_to_yuan(overtime_cents),
+                    .total_amount = cents_to_yuan(total_cents),
+                    .timestamp = now
+                });
+
+                terminated_count++;
+            }
+        }
+
+        // 3. 将电站下所有充电桩状态置为 OFFLINE
+        ChargingStatePool::instance().set_station_piles_offline(station_id);
+
+        StationOnlineStatusResponseData resp{
+            .station_id = station_id,
+            .status = 2,
+            .is_online = false,
+            .terminated_orders = terminated_count,
+            .message = "Station taken offline, active orders terminated and settled"
+        };
+        return make_success_response(resp);
     }
 
     // ==========================================

@@ -19,6 +19,35 @@ std::string_view HttpRouter::extract_path_only(std::string_view target) {
     return target;
 }
 
+static std::string url_decode_string(std::string_view in) {
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size(); ++i) {
+        if (in[i] == '%') {
+            if (i + 2 < in.size()) {
+                auto hex_to_int = [](char c) -> int {
+                    if (c >= '0' && c <= '9') return c - '0';
+                    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                    return -1;
+                };
+                int v1 = hex_to_int(in[i + 1]);
+                int v2 = hex_to_int(in[i + 2]);
+                if (v1 >= 0 && v2 >= 0) {
+                    out.push_back(static_cast<char>((v1 << 4) | v2));
+                    i += 2;
+                    continue;
+                }
+            }
+        } else if (in[i] == '+') {
+            out.push_back(' ');
+            continue;
+        }
+        out.push_back(in[i]);
+    }
+    return out;
+}
+
 std::unordered_map<std::string, std::string> HttpRouter::parse_query_params(std::string_view target) {
     std::unordered_map<std::string, std::string> params;
     auto q_pos = target.find('?');
@@ -33,8 +62,8 @@ std::unordered_map<std::string, std::string> HttpRouter::parse_query_params(std:
         std::string_view pair = query_str.substr(start, amp_pos - start);
         size_t eq_pos = pair.find('=');
         if (eq_pos != std::string_view::npos) {
-            std::string key(pair.substr(0, eq_pos));
-            std::string val(pair.substr(eq_pos + 1));
+            std::string key = url_decode_string(pair.substr(0, eq_pos));
+            std::string val = url_decode_string(pair.substr(eq_pos + 1));
             params[key] = val;
         }
 
@@ -90,9 +119,18 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
     if (path == "/api/v1/stations/nearby" && method == http::verb::get) {
         double lat = query.contains("latitude") ? std::stod(query["latitude"]) : 39.9042;
         double lng = query.contains("longitude") ? std::stod(query["longitude"]) : 116.4074;
-        double radius = query.contains("radius_km") ? std::stod(query["radius_km"]) : 10.0;
+        double radius = query.contains("radius_km") ? std::stod(query["radius_km"]) : 2.0;
         size_t limit = query.contains("limit") ? std::stoul(query["limit"]) : 20;
         return StationController::handle_get_nearby_stations(lat, lng, radius, limit);
+    }
+
+    if (path == "/api/v1/stations/district" && method == http::verb::get) {
+        std::string district = query.contains("district") ? query["district"] : "";
+        double lat = query.contains("latitude") ? std::stod(query["latitude"]) : 0.0;
+        double lng = query.contains("longitude") ? std::stod(query["longitude"]) : 0.0;
+        int page = query.contains("page") ? std::stoi(query["page"]) : 1;
+        int page_size = query.contains("page_size") ? std::stoi(query["page_size"]) : 20;
+        return StationController::handle_get_stations_by_district(district, lat, lng, page, page_size);
     }
 
     // 正则路径匹配: /api/v1/stations/{station_id}
@@ -204,9 +242,6 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
                 int st = query.contains("status") ? std::stoi(query["status"]) : 0;
                 return AdminController::handle_get_stations(page, page_size, name, st);
             }
-            if (method == http::verb::post) {
-                return AdminController::handle_create_station(req);
-            }
         }
 
         // 单站销售统计: /api/v1/admin/stations/{station_id}/sales-stats
@@ -217,12 +252,18 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
             return StationController::handle_get_sales_stats(sid, time_range);
         }
 
-        // 电站更新 / 删除: /api/v1/admin/stations/{station_id}
-        static const std::regex station_op_regex(R"(^/api/v1/admin/stations/(\d+)$)");
-        if (std::regex_match(path_str.c_str(), match, station_op_regex)) {
+        // 电站上线: POST /api/v1/admin/stations/{station_id}/online
+        static const std::regex station_online_regex(R"(^/api/v1/admin/stations/(\d+)/online$)");
+        if (method == http::verb::post && std::regex_match(path_str.c_str(), match, station_online_regex)) {
             int64_t sid = std::stoll(match[1].str());
-            if (method == http::verb::put) return AdminController::handle_update_station(sid, req);
-            if (method == http::verb::delete_) return AdminController::handle_delete_station(sid);
+            return AdminController::handle_online_station(sid);
+        }
+
+        // 电站下线: POST /api/v1/admin/stations/{station_id}/offline
+        static const std::regex station_offline_regex(R"(^/api/v1/admin/stations/(\d+)/offline$)");
+        if (method == http::verb::post && std::regex_match(path_str.c_str(), match, station_offline_regex)) {
+            int64_t sid = std::stoll(match[1].str());
+            return AdminController::handle_offline_station(sid);
         }
 
         // 充电桩管理

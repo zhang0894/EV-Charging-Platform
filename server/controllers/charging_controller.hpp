@@ -7,6 +7,8 @@
 #include "../db/db_repository.hpp"
 #include "../memory/state_pool.hpp"
 #include "../websocket/ws_manager.hpp"
+#include "../data/static_stations.hpp"
+#include "../memory/station_status_manager.hpp"
 #include <glaze/glaze.hpp>
 
 namespace ev {
@@ -72,19 +74,37 @@ public:
         }
 
         // 3. 校验充电桩存在与空闲状态
-        auto p_res = DbRepository::instance().get_pile_by_id(start_req.pile_id);
-        if (!p_res) {
-            return make_error_response(p_res.error());
-        }
-
         auto p_pool = ChargingStatePool::instance().get_pile_state(start_req.pile_id);
-        if (!p_pool || p_pool->status != "IDLE") {
+        if (!p_pool) {
+            return make_error_response(AppError::ChargingPileNotFound, "Charging pile not found");
+        }
+        if (p_pool->status != "IDLE") {
             return make_error_response(AppError::PileBusyOrReserved, "Charging pile is not in IDLE state");
         }
 
-        auto st_res = DbRepository::instance().get_station_by_id(p_res->station_id);
-        if (!st_res) {
-            return make_error_response(st_res.error());
+        int64_t st_id = p_pool->station_id;
+        if (!StationStatusManager::instance().is_online(st_id)) {
+            return make_error_response(AppError::StationNotFound, "Charging station is offline");
+        }
+
+        std::string st_name;
+        double price_per_kwh = 1.45;
+        double service_fee_per_kwh = 0.35;
+        double overtime_fee_per_15min = 5.00;
+        int overtime_grace_minutes = 15;
+
+        const StaticStation* static_st = find_static_station(static_cast<int32_t>(st_id));
+        if (static_st) {
+            st_name = static_st->name;
+        } else {
+            auto st_res = DbRepository::instance().get_station_by_id(st_id);
+            if (st_res) {
+                st_name = st_res->station_name;
+                price_per_kwh = st_res->price_per_kwh;
+                service_fee_per_kwh = st_res->service_fee_per_kwh;
+                overtime_fee_per_15min = st_res->overtime_fee_per_15min;
+                overtime_grace_minutes = st_res->overtime_grace_minutes;
+            }
         }
 
         int64_t now = current_time_ms();
@@ -96,10 +116,10 @@ public:
             order_id,
             user_id,
             20,
-            st_res->price_per_kwh,
-            st_res->service_fee_per_kwh,
-            st_res->overtime_fee_per_15min,
-            st_res->overtime_grace_minutes
+            price_per_kwh,
+            service_fee_per_kwh,
+            overtime_fee_per_15min,
+            overtime_grace_minutes
         );
 
         if (!pool_ok) {
@@ -110,7 +130,7 @@ public:
         OrderModel order{
             .order_id = order_id,
             .user_id = user_id,
-            .station_id = st_res->station_id,
+            .station_id = st_id,
             .pile_id = start_req.pile_id,
             .strategy_type = start_req.strategy_type,
             .strategy_value = start_req.strategy_value,
@@ -118,10 +138,10 @@ public:
             .start_time = now,
             .start_soc = 20,
             .end_soc = 20,
-            .electricity_price = st_res->price_per_kwh,
-            .service_price = st_res->service_fee_per_kwh,
-            .overtime_grace_minutes = st_res->overtime_grace_minutes,
-            .overtime_rate_per_15min = st_res->overtime_fee_per_15min,
+            .electricity_price = price_per_kwh,
+            .service_price = service_fee_per_kwh,
+            .overtime_grace_minutes = overtime_grace_minutes,
+            .overtime_rate_per_15min = overtime_fee_per_15min,
             .created_at = now,
             .updated_at = now
         };
@@ -135,7 +155,7 @@ public:
         // 广播桩状态变动通知
         WsManager::instance().broadcast_pile_status(PileStatusChangedBroadcastFrame{
             .event = "PILE_STATUS_CHANGED",
-            .station_id = st_res->station_id,
+            .station_id = st_id,
             .pile_id = start_req.pile_id,
             .old_status = "IDLE",
             .new_status = "CHARGING",
@@ -146,14 +166,14 @@ public:
         StartChargingResponseData data{
             .order_id = order_id,
             .pile_id = start_req.pile_id,
-            .station_id = st_res->station_id,
-            .station_name = st_res->station_name,
+            .station_id = st_id,
+            .station_name = st_name,
             .order_status = "CHARGING",
             .start_time = now,
             .initial_soc = 20,
-            .unit_price = st_res->price_per_kwh,
-            .service_price = st_res->service_fee_per_kwh,
-            .overtime_fee_per_15min = st_res->overtime_fee_per_15min,
+            .unit_price = price_per_kwh,
+            .service_price = service_fee_per_kwh,
+            .overtime_fee_per_15min = overtime_fee_per_15min,
             .ws_telemetry_url = std::format("ws://localhost:8080/ws/v1/charging/{}", order_id)
         };
 
@@ -281,8 +301,24 @@ public:
             return make_error_response(AppError::PermissionDenied);
         }
 
-        auto st_res = DbRepository::instance().get_station_by_id(o_res->station_id);
-        auto p_res = DbRepository::instance().get_pile_by_id(o_res->pile_id);
+        std::string st_name;
+        const StaticStation* static_st = find_static_station(static_cast<int32_t>(o_res->station_id));
+        if (static_st) {
+            st_name = static_st->name;
+        } else {
+            auto st_res = DbRepository::instance().get_station_by_id(o_res->station_id);
+            if (st_res) st_name = st_res->station_name;
+        }
+
+        std::string p_type = "FAST";
+        auto p_pool = ChargingStatePool::instance().get_pile_state(o_res->pile_id);
+        if (p_pool) {
+            p_type = p_pool->type;
+        } else {
+            auto p_res = DbRepository::instance().get_pile_by_id(o_res->pile_id);
+            if (p_res) p_type = p_res->type;
+        }
+
         auto u_res = DbRepository::instance().get_user_by_id(o_res->user_id);
 
         int64_t duration = (o_res->end_time > o_res->start_time) ? (o_res->end_time - o_res->start_time) / 1000 : 0;
@@ -292,9 +328,9 @@ public:
             .user_id = o_res->user_id,
             .user_phone = u_res ? u_res->phone : "",
             .station_id = o_res->station_id,
-            .station_name = st_res ? st_res->station_name : "",
+            .station_name = st_name,
             .pile_id = o_res->pile_id,
-            .pile_type = p_res ? p_res->type : "FAST",
+            .pile_type = p_type,
             .order_status = o_res->order_status,
             .start_time = o_res->start_time,
             .end_time = o_res->end_time,

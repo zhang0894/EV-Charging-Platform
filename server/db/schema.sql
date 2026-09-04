@@ -69,7 +69,7 @@ CREATE INDEX IF NOT EXISTS idx_stations_lat_lng ON stations(latitude, longitude)
 CREATE TABLE IF NOT EXISTS piles (
     pile_id VARCHAR(32) PRIMARY KEY,
     station_id BIGINT NOT NULL REFERENCES stations(station_id) ON DELETE CASCADE,
-    pile_name VARCHAR(64) NOT NULL,
+    pile_name VARCHAR(128) NOT NULL,
     type VARCHAR(16) NOT NULL DEFAULT 'FAST', -- 'FAST', 'SLOW'
     gun_type VARCHAR(32) DEFAULT '国标2015',
     max_power_kw DOUBLE PRECISION NOT NULL DEFAULT 120.0,

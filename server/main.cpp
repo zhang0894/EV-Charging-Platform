@@ -7,6 +7,8 @@
 #include "simulation/simulator.hpp"
 #include "cache/redis_cache.hpp"
 #include "db/async_flow_persister.hpp"
+#include "data/static_stations.hpp"
+#include "memory/station_status_manager.hpp"
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/signal_set.hpp>
@@ -52,42 +54,45 @@ int main(int argc, char* argv[]) {
     std::println(">>> 2. 正在初始化 Redis 实时/TTL 缓存组件...");
     ev::RedisCache::instance().init("127.0.0.1", 6379);
 
-    // 3. 询问是否需要清空数据库与缓存并重新初始化
+    // 3. 询问是否需要清空数据库并重新导入数据? (y/N)
     bool skip_prompt = (std::getenv("NO_PROMPT") != nullptr && std::string_view(std::getenv("NO_PROMPT")) == "1");
+    bool do_reset_and_import = false;
+
     if (!skip_prompt) {
-        std::print("\n[交互提示] 是否需要清空现有数据库与缓存并重新初始化? (y/N): ");
+        std::cout << "是否清空数据库并重新导入数据? (y/N): " << std::flush;
         std::string choice;
         if (std::getline(std::cin, choice)) {
             while (!choice.empty() && std::isspace(static_cast<unsigned char>(choice.front()))) choice.erase(choice.begin());
             while (!choice.empty() && std::isspace(static_cast<unsigned char>(choice.back()))) choice.pop_back();
 
             if (choice == "y" || choice == "Y" || choice == "yes" || choice == "YES") {
-                std::println(">>> 正在清空数据库所有业务表与 Redis 缓存...");
-                ev::SeedDataGenerator::clear_database();
-                ev::RedisCache::instance().flush_all();
-                std::println(">>> [OK] 数据库与缓存已清空，准备重新初始化。\n");
-            } else {
-                std::println(">>> 保持现有数据库内容不变。\n");
+                do_reset_and_import = true;
             }
         }
     } else {
         std::println(">>> [NO_PROMPT] 自动化/非交互模式，保持现有数据库内容不变。");
     }
 
-    // 4. 自动检查并预置初始数据
-    std::println(">>> 正在检查并装载数据...");
-    ev::SeedDataGenerator::populate_if_empty();
-
-    // 4. 构建 R-Tree 空间索引与电桩状态内存池
-    std::println(">>> 4. 正在构建 R-Tree 2D 空间几何索引与电桩内存状态池...");
-    auto all_stations = ev::DbRepository::instance().get_all_stations();
-    auto all_piles = ev::DbRepository::instance().get_all_piles();
-
-    if (all_stations && all_piles) {
-        ev::ChargingStatePool::instance().init_from_piles(*all_piles);
-        ev::StationRTree::instance().build_index(*all_stations);
-        std::println("  [OK] 成功构建 {} 个充电站 R-Tree 空间索引与 {} 个电桩状态池", all_stations->size(), all_piles->size());
+    if (do_reset_and_import) {
+        std::println(">>> 正在清空数据库所有业务表与 Redis 缓存...");
+        ev::SeedDataGenerator::clear_database();
+        ev::RedisCache::instance().flush_all();
+        std::println(">>> 正在读取本地 JSON 文件，通过 Glaze 解析并批量导入数据库...");
+        ev::SeedDataGenerator::import_from_json("data");
+        std::println(">>> [OK] 初始数据重新导入完毕。\n");
+    } else {
+        std::println(">>> 保持现有数据库内容不变，直接启动服务。\n");
+        // 保险检查：若数据库完全没有任何数据（首次启动），自动导入
+        ev::SeedDataGenerator::populate_if_empty("data");
     }
+
+    // 4. 构建真实电站常量 R-Tree 空间索引与电桩状态内存池
+    std::println(">>> 4. 正在装载北京市真实充电站编译期常量 (共 {} 座真实电站)...", ev::STATIC_STATION_COUNT);
+    ev::StationRTree::instance().build_static_index();
+    ev::StationStatusManager::instance().init();
+    ev::ChargingStatePool::instance().init_from_seed_piles("data");
+    std::println("  [OK] 成功构建 {} 个真实充电站 R-Tree 空间几何索引与 16 个行政区索引", ev::STATIC_STATION_COUNT);
+    std::println("  [OK] 成功为全量充电站装载充电桩，状态池初始化就绪");
 
     try {
         // 4. 初始化 Asio 网络与协程事件循环 (多线程并发驱动: 2 线程协同)
