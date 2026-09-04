@@ -1,0 +1,198 @@
+/* =========================================================
+ * 充电桩运营管理平台 - 科技感 QSS 样式表
+ * 配色：深蓝底 + 灰白文字 + 青色高光
+ * ========================================================= */
+
+/* 全局背景与字体 */
+QWidget {
+    background-color: #0a1424;
+    color: #e6e9ef;
+    font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Segoe UI", sans-serif;
+    font-size: 14px;
+}
+
+/* ---------------- 主窗口 ---------------- */
+QMainWindow {
+    background-color: #0a1424;
+}
+
+/* ---------------- 侧边栏 ---------------- */
+QFrame#sidebarFrame {
+    background-color: #0f1b2d;
+    border-right: 1px solid #1e2d45;
+}
+
+/* 侧边栏顶部品牌 LOGO 文本 */
+QLabel#brandLabel {
+    color: #00d4ff;
+    font-size: 18px;
+    font-weight: 700;
+    padding: 18px 20px;
+    border-bottom: 1px solid #1e2d45;
+}
+
+/* 侧边栏菜单按钮 */
+QPushButton#btnDashboard,
+QPushButton#btnPileStatus,
+QPushButton#btnPileManage,
+QPushButton#btnStationManage,
+QPushButton#btnUserManage {
+    text-align: left;
+    padding: 14px 20px 14px 22px;
+    border: none;
+    border-left: 3px solid transparent;
+    background-color: transparent;
+    color: #b8c2d1;
+    font-size: 15px;
+}
+
+QPushButton#btnDashboard:hover,
+QPushButton#btnPileStatus:hover,
+QPushButton#btnPileManage:hover,
+QPushButton#btnStationManage:hover,
+QPushButton#btnUserManage:hover {
+    background-color: #16223a;
+    color: #ffffff;
+}
+
+/* 选中态：左侧青色高亮条 */
+QPushButton#btnDashboard:checked,
+QPushButton#btnPileStatus:checked,
+QPushButton#btnPileManage:checked,
+QPushButton#btnStationManage:checked,
+QPushButton#btnUserManage:checked {
+    background-color: #1e3a5f;
+    border-left: 3px solid #00d4ff;
+    color: #ffffff;
+    font-weight: 600;
+}
+
+/* 菜单按钮图标尺寸 */
+QPushButton#btnDashboard,
+QPushButton#btnPileStatus,
+QPushButton#btnPileManage,
+QPushButton#btnStationManage,
+QPushButton#btnUserManage {
+    icon-size: 22px;
+}
+
+/* ---------------- 内容区 Stack ---------------- */
+QStackedWidget {
+    background-color: #0a1424;
+}
+
+/* 占位页（未实现模块）提示文字 */
+QLabel#placeholderLabel,
+QLabel#placeholderLabel_2,
+QLabel#placeholderLabel_3,
+QLabel#placeholderLabel_4 {
+    color: #5a6b85;
+    font-size: 20px;
+    font-weight: 500;
+    qproperty-alignment: AlignCenter;
+}
+
+/* ---------------- 日志区 ---------------- */
+QPlainTextEdit#logEdit {
+    background-color: #060d1a;
+    color: #7fa8c9;
+    border-top: 1px solid #1e2d45;
+    border: none;
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 12px;
+    padding: 8px 12px;
+}
+
+/* ============== DashboardWidget 销售业绩页 ============== */
+
+/* 卡片容器 */
+QFrame#cardToday, QFrame#cardMonth, QFrame#cardTotal {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #162238, stop:1 #1a2a45);
+    border: 1px solid #2a3b55;
+    border-radius: 10px;
+}
+
+QFrame#cardToday:hover, QFrame#cardMonth:hover, QFrame#cardTotal:hover {
+    border: 1px solid #00d4ff;
+}
+
+/* 卡片标题 */
+QLabel#labelTitleToday, QLabel#labelTitleMonth, QLabel#labelTitleTotal {
+    color: #8b9bb4;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+/* 卡片数值 */
+QLabel#labelValueToday, QLabel#labelValueMonth, QLabel#labelValueTotal {
+    color: #00d4ff;
+    font-size: 30px;
+    font-weight: 700;
+}
+
+/* 卡片副标题（单位/说明） */
+QLabel#labelSubToday, QLabel#labelSubMonth, QLabel#labelSubTotal {
+    color: #5a6b85;
+    font-size: 12px;
+}
+
+/* 趋势切换按钮 */
+QPushButton#btn7Days, QPushButton#btn30Days {
+    background-color: #1a2740;
+    color: #b8c2d1;
+    border: 1px solid #2a3b55;
+    border-radius: 4px;
+    padding: 6px 18px;
+    min-width: 80px;
+}
+
+QPushButton#btn7Days:hover, QPushButton#btn30Days:hover {
+    border: 1px solid #00d4ff;
+    color: #ffffff;
+}
+
+QPushButton#btn7Days:checked, QPushButton#btn30Days:checked {
+    background-color: #00d4ff;
+    color: #0a1424;
+    border: 1px solid #00d4ff;
+    font-weight: 600;
+}
+
+/* 趋势标题 */
+QLabel#trendTitle {
+    color: #e6e9ef;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+/* 图表容器边框 */
+QFrame#chartFrame {
+    background-color: #0f1b2d;
+    border: 1px solid #1e2d45;
+    border-radius: 8px;
+}
+
+/* QChartView 背景透明，融入深色主题 */
+QChartView {
+    background-color: #0f1b2d;
+    border: none;
+}
+
+/* 滚动条美化 */
+QScrollBar:vertical {
+    background: #0f1b2d;
+    width: 10px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: #2a3b55;
+    border-radius: 5px;
+    min-height: 30px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #00d4ff;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+}

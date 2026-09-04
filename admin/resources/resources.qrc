@@ -1,0 +1,13 @@
+<RCC>
+    <qresource prefix="/">
+        <!-- QSS 样式表 -->
+        <file>style.qss</file>
+        <!-- 侧边栏占位图标（SVG，矢量可缩放） -->
+        <file>img/dashboard.svg</file>
+        <file>img/pile-status.svg</file>
+        <file>img/pile-manage.svg</file>
+        <file>img/station-manage.svg</file>
+        <file>img/user-manage.svg</file>
+        <file>img/app-logo.svg</file>
+    </qresource>
+</RCC>

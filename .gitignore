@@ -14,3 +14,5 @@ progress-governor
 项目说明书.doc
 venv/
 data_crawler/
+admin/build
+admin/.vscode
