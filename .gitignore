@@ -12,3 +12,5 @@ server/build_standard
 progress-governor
 技术选型.md
 项目说明书.doc
+venv/
+data_crawler/
