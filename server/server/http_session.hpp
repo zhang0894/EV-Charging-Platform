@@ -29,8 +29,9 @@ inline net::awaitable<void> handle_session(tcp::socket socket) {
             // 设置 30s 请求读取超时
             stream.expires_after(std::chrono::seconds(30));
 
-            http::request<http::string_body> req;
-            auto [ec, bytes_read] = co_await http::async_read(stream, buffer, req, net::as_tuple(net::use_awaitable));
+            http::request_parser<http::string_body> parser;
+            parser.body_limit(2 * 1024 * 1024); // 2MB，允许业务层精确校验 < 1MB 并返回规范的 HTTP 413
+            auto [ec, bytes_read] = co_await http::async_read(stream, buffer, parser, net::as_tuple(net::use_awaitable));
 
             if (ec == http::error::end_of_stream) {
                 break;
@@ -38,6 +39,8 @@ inline net::awaitable<void> handle_session(tcp::socket socket) {
             if (ec) {
                 break;
             }
+
+            auto req = parser.release();
 
             // 判断是否为 WebSocket 升级请求
             if (beast::websocket::is_upgrade(req)) {

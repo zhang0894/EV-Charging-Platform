@@ -15,6 +15,8 @@ enum class AppError : int32_t {
     InvalidPhoneFormat = 10003,
     InvalidCredentials = 10004,
     UserAlreadyExists = 10005,
+    AvatarNotFound = 10006,
+    PayloadTooLarge = 10007,
 
     // 20xxx: 电站与充电桩错误
     StationNotFound = 20001,
@@ -57,6 +59,8 @@ inline std::string_view error_message(AppError err) noexcept {
         case AppError::InvalidPhoneFormat: return "Invalid phone format: must be 11 digits";
         case AppError::InvalidCredentials: return "Invalid account or password";
         case AppError::UserAlreadyExists: return "User phone already registered";
+        case AppError::AvatarNotFound: return "User avatar not found";
+        case AppError::PayloadTooLarge: return "Avatar file size exceeds 1MB limit";
         case AppError::StationNotFound: return "Charging station not found";
         case AppError::ChargingPileNotFound: return "Charging pile not found";
         case AppError::PileBusyOrReserved: return "Charging pile is busy or reserved";
@@ -99,6 +103,7 @@ inline unsigned int http_status_for_error(AppError err) noexcept {
         case AppError::UserAccountFrozen:
         case AppError::PermissionDenied: return 403;
         case AppError::UserNotFound:
+        case AppError::AvatarNotFound:
         case AppError::StationNotFound:
         case AppError::ChargingPileNotFound:
         case AppError::OrderNotFound:
@@ -109,6 +114,7 @@ inline unsigned int http_status_for_error(AppError err) noexcept {
         case AppError::ActiveOrderExists:
         case AppError::DuplicateTransactionKey:
         case AppError::OrderAlreadyRefunded: return 409;
+        case AppError::PayloadTooLarge: return 413;
         case AppError::PileInFaultState:
         case AppError::InsufficientBalance:
         case AppError::InvalidRefundAmount:

@@ -24,6 +24,14 @@ struct UserModel {
     int64_t updated_at{0};
 };
 
+struct AvatarModel {
+    int64_t user_id{0};
+    std::string content_type{"image/png"};
+    int file_size{0};
+    std::string avatar_data;
+    int64_t updated_at{0};
+};
+
 struct UserWalletModel {
     int64_t user_id{0};
     int64_t balance_cents{0};
@@ -147,6 +155,8 @@ struct LoginRequest {
     std::string auth_type{"passwordless"};
     std::string password;
     std::string account; // 管理员登录兼容
+    std::string sms_code;
+    std::string code;
 };
 
 struct RegisterRequest {
@@ -180,13 +190,19 @@ struct UploadAvatarRequest {
     std::string file_type{"png"};
 };
 
+struct UploadAvatarResponseData {
+    int64_t user_id{0};
+    std::string content_type{"image/png"};
+    int file_size{0};
+    int64_t updated_at{0};
+};
+
 struct AuthResponseData {
     int64_t user_id{0};
     int64_t admin_id{0};
     std::string username;
     std::string phone;
     std::string nickname;
-    std::string avatar_url;
     double balance{0.0};
     int64_t balance_cents{0};
     bool is_new_user{false};

@@ -24,6 +24,9 @@ public:
     Result<void> update_user_password(int64_t user_id, std::string_view new_password);
     Result<void> update_user_nickname(int64_t user_id, std::string_view nickname);
     Result<std::string> update_user_avatar(int64_t user_id, std::string_view avatar_url);
+    Result<void> save_user_avatar(int64_t user_id, std::string_view content_type, std::string_view binary_data);
+    Result<std::optional<AvatarModel>> get_user_avatar(int64_t user_id);
+    Result<void> clear_user_avatars();
     Result<void> update_user_status(int64_t user_id, int status);
     Result<UserAdminListResponseData> get_users_admin_paged(int page, int page_size, std::string_view phone_filter = "", int status_filter = 0);
 

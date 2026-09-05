@@ -243,6 +243,127 @@ Result<std::string> DbRepository::update_user_avatar(int64_t user_id, std::strin
     return std::string(avatar_url);
 }
 
+Result<void> DbRepository::save_user_avatar(int64_t user_id, std::string_view content_type, std::string_view binary_data) {
+    auto conn = DbPool::instance().acquire_writer();
+    if (!conn) return std::unexpected(AppError::DatabaseError);
+
+    int64_t now = current_time_ms();
+    std::string uid_str = std::to_string(user_id);
+    std::string sz_str = std::to_string(binary_data.size());
+    std::string now_str = std::to_string(now);
+    std::string ct_str = content_type.empty() ? "image/png" : std::string(content_type);
+
+    const char* paramValues[5] = {
+        uid_str.c_str(),
+        ct_str.c_str(),
+        sz_str.c_str(),
+        binary_data.data(),
+        now_str.c_str()
+    };
+    int paramLengths[5] = {
+        static_cast<int>(uid_str.size()),
+        static_cast<int>(ct_str.size()),
+        static_cast<int>(sz_str.size()),
+        static_cast<int>(binary_data.size()),
+        static_cast<int>(now_str.size())
+    };
+    int paramFormats[5] = { 0, 0, 0, 1, 0 }; // 第4个参数 ($4) 为原生二进制格式
+
+    static const char* sql =
+        "INSERT INTO user_avatars (user_id, content_type, file_size, avatar_data, updated_at) "
+        "VALUES ($1, $2, $3, $4::bytea, $5) "
+        "ON CONFLICT (user_id) DO UPDATE SET "
+        "content_type = EXCLUDED.content_type, "
+        "file_size = EXCLUDED.file_size, "
+        "avatar_data = EXCLUDED.avatar_data, "
+        "updated_at = EXCLUDED.updated_at;";
+
+    PgResultGuard res(conn->exec_params(
+        sql,
+        5,
+        nullptr,
+        paramValues,
+        paramLengths,
+        paramFormats,
+        0
+    ));
+
+    if (!res.is_ok()) {
+        std::cerr << "[DbRepository] save_user_avatar failed: " << conn->last_error() << "\n";
+        return std::unexpected(AppError::DatabaseError);
+    }
+    return {};
+}
+
+Result<std::optional<AvatarModel>> DbRepository::get_user_avatar(int64_t user_id) {
+    auto conn = DbPool::instance().acquire_reader();
+    if (!conn) return std::unexpected(AppError::DatabaseError);
+
+    std::string uid_str = std::to_string(user_id);
+    const char* paramValues[1] = { uid_str.c_str() };
+    int paramLengths[1] = { static_cast<int>(uid_str.size()) };
+    int paramFormats[1] = { 0 };
+
+    static const char* sql = "SELECT content_type, file_size, avatar_data, updated_at FROM user_avatars WHERE user_id = $1;";
+
+    PgResultGuard res(conn->exec_params(
+        sql,
+        1,
+        nullptr,
+        paramValues,
+        paramLengths,
+        paramFormats,
+        0
+    ));
+
+    if (!res.is_ok()) {
+        std::cerr << "[DbRepository] get_user_avatar failed: " << conn->last_error() << "\n";
+        return std::unexpected(AppError::DatabaseError);
+    }
+
+    if (res.rows() == 0) {
+        return std::nullopt;
+    }
+
+    std::string ct = res.value(0, 0);
+    int sz = std::stoi(res.value(0, 1));
+    int64_t updated_at = 0;
+    try {
+        updated_at = std::stoll(res.value(0, 3));
+    } catch (...) {
+        updated_at = current_time_ms();
+    }
+
+    // 解码 bytea 二进制数据
+    std::string binary_bytes;
+    const char* raw_val = res.value(0, 2);
+    if (raw_val) {
+        size_t to_len = 0;
+        unsigned char* unescaped = PQunescapeBytea(reinterpret_cast<const unsigned char*>(raw_val), &to_len);
+        if (unescaped) {
+            binary_bytes.assign(reinterpret_cast<const char*>(unescaped), to_len);
+            PQfreemem(unescaped);
+        }
+    }
+
+    return AvatarModel{
+        .user_id = user_id,
+        .content_type = ct,
+        .file_size = sz,
+        .avatar_data = std::move(binary_bytes),
+        .updated_at = updated_at
+    };
+}
+
+Result<void> DbRepository::clear_user_avatars() {
+    auto conn = DbPool::instance().acquire_writer();
+    if (!conn) return std::unexpected(AppError::DatabaseError);
+
+    PgResultGuard res(conn->exec("TRUNCATE TABLE user_avatars;"));
+    if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
+    return {};
+}
+
 Result<void> DbRepository::update_user_status(int64_t user_id, int status) {
     auto conn = DbPool::instance().acquire_writer();
     if (!conn) return std::unexpected(AppError::DatabaseError);

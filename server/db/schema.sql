@@ -18,6 +18,15 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 
+-- 1.1 用户真实头像存储表 (二进制文件存储与快速定位)
+CREATE TABLE IF NOT EXISTS user_avatars (
+    user_id BIGINT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+    content_type VARCHAR(64) NOT NULL DEFAULT 'image/png',
+    file_size INTEGER NOT NULL,
+    avatar_data BYTEA NOT NULL,
+    updated_at BIGINT NOT NULL
+);
+
 -- 2. 钱包账户表 (资金安全独立存储)
 CREATE TABLE IF NOT EXISTS user_wallets (
     user_id BIGINT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,

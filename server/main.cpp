@@ -10,6 +10,7 @@
 #include "data/static_stations.hpp"
 #include "memory/station_status_manager.hpp"
 #include "memory/station_price_manager.hpp"
+#include "memory/avatar_manager.hpp"
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/signal_set.hpp>
@@ -84,6 +85,7 @@ int main(int argc, char* argv[]) {
         std::println(">>> 正在清空数据库所有业务表与 Redis 缓存...");
         ev::SeedDataGenerator::clear_database();
         ev::RedisCache::instance().flush_all();
+        ev::AvatarManager::instance().clear();
         std::println(">>> 正在读取本地 JSON 文件，通过 Glaze 解析并批量导入数据库...");
         ev::SeedDataGenerator::import_from_json("data");
         std::println(">>> [OK] 初始数据重新导入完毕。\n");

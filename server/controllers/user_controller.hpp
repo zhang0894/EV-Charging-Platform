@@ -5,6 +5,7 @@
 #include "../common/models.hpp"
 #include "../common/response.hpp"
 #include "../db/db_repository.hpp"
+#include "../memory/avatar_manager.hpp"
 #include <glaze/glaze.hpp>
 
 namespace ev {
@@ -86,22 +87,109 @@ public:
     }
 
     static http::response<http::string_body> handle_upload_avatar(int64_t user_id, const http::request<http::string_body>& req) {
-        UploadAvatarRequest a_req;
-        auto err = glz::read_json(a_req, req.body());
-        if (err || a_req.image_base64.empty()) {
-            return make_error_response(AppError::InvalidJsonPayload, "Missing image_base64");
+        if (req.body().empty()) {
+            return make_error_response(AppError::InvalidParameters, "Empty file body");
         }
 
-        std::string avatar_url = std::format("http://localhost:8080/static/avatars/user_{}_{}.png", user_id, current_time_ms());
-        auto res = DbRepository::instance().update_user_avatar(user_id, avatar_url);
-        if (!res) {
-            return make_error_response(res.error());
+        constexpr size_t MAX_SIZE = 1024 * 1024; // 1MB 严格限制 (< 1MB)
+        if (req.body().size() >= MAX_SIZE) {
+            return make_error_response(AppError::PayloadTooLarge, "Avatar file size must be less than 1MB");
         }
 
-        struct AvatarResp {
-            std::string avatar_url;
-        };
-        return make_success_response(AvatarResp{.avatar_url = avatar_url});
+        std::string_view raw_body = req.body();
+        std::string content_type;
+        auto ct_it = req.find(http::field::content_type);
+        if (ct_it != req.end()) {
+            content_type = std::string(ct_it->value());
+        }
+
+        std::string_view file_data = raw_body;
+
+        // 支持 multipart/form-data 提取二进制文件体
+        if (content_type.find("multipart/form-data") != std::string::npos) {
+            auto b_pos = content_type.find("boundary=");
+            if (b_pos != std::string::npos) {
+                std::string boundary = "--" + content_type.substr(b_pos + 9);
+                if (boundary.back() == '"') boundary.pop_back();
+                if (boundary.size() > 2 && boundary[2] == '"') boundary.erase(2, 1);
+
+                auto p1 = raw_body.find(boundary);
+                if (p1 != std::string_view::npos) {
+                    auto header_end = raw_body.find("\r\n\r\n", p1);
+                    if (header_end != std::string_view::npos) {
+                        auto next_b = raw_body.find(boundary, header_end + 4);
+                        if (next_b != std::string_view::npos) {
+                            size_t data_end = next_b;
+                            if (data_end >= 2 && raw_body[data_end - 2] == '\r' && raw_body[data_end - 1] == '\n') {
+                                data_end -= 2;
+                            }
+                            file_data = raw_body.substr(header_end + 4, data_end - (header_end + 4));
+
+                            std::string_view part_header = raw_body.substr(p1, header_end - p1);
+                            auto part_ct_pos = part_header.find("Content-Type: ");
+                            if (part_ct_pos != std::string_view::npos) {
+                                auto ct_end = part_header.find("\r\n", part_ct_pos);
+                                content_type = std::string(part_header.substr(part_ct_pos + 14, ct_end - (part_ct_pos + 14)));
+                            } else {
+                                content_type.clear();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (file_data.size() >= MAX_SIZE) {
+            return make_error_response(AppError::PayloadTooLarge, "Avatar file size must be less than 1MB");
+        }
+
+        if (file_data.empty()) {
+            return make_error_response(AppError::InvalidParameters, "Empty file content");
+        }
+
+        if (content_type.empty() || content_type.find("multipart") != std::string::npos || content_type.find("octet-stream") != std::string::npos) {
+            content_type = AvatarManager::detect_image_content_type(file_data);
+        }
+
+        auto save_res = AvatarManager::instance().save_avatar(user_id, content_type, file_data);
+        if (!save_res) {
+            return make_error_response(save_res.error());
+        }
+
+        return make_success_response(*save_res);
+    }
+
+    static http::response<http::string_body> handle_get_avatar(int64_t user_id, const http::request<http::string_body>& req) {
+        auto avatar_opt = AvatarManager::instance().get_avatar(user_id);
+        if (!avatar_opt) {
+            return make_error_response(AppError::AvatarNotFound, "Avatar not found");
+        }
+
+        const auto& avatar = *avatar_opt;
+
+        // HTTP 304 协商缓存 (If-None-Match)
+        auto inm_it = req.find(http::field::if_none_match);
+        if (inm_it != req.end() && inm_it->value() == avatar.etag) {
+            http::response<http::string_body> res{http::status::not_modified, req.version()};
+            res.set(http::field::server, "Modern-Cpp23-Charging-Server");
+            res.set(http::field::etag, avatar.etag);
+            res.set(http::field::cache_control, "public, max-age=3600");
+            res.set(http::field::access_control_allow_origin, "*");
+            res.keep_alive(req.keep_alive());
+            return res;
+        }
+
+        // 直接传输真实头像二进制图片流
+        http::response<http::string_body> res{http::status::ok, req.version()};
+        res.set(http::field::server, "Modern-Cpp23-Charging-Server");
+        res.set(http::field::content_type, avatar.content_type);
+        res.set(http::field::etag, avatar.etag);
+        res.set(http::field::cache_control, "public, max-age=3600");
+        res.set(http::field::access_control_allow_origin, "*");
+        res.body() = avatar.data;
+        res.prepare_payload();
+        res.keep_alive(req.keep_alive());
+        return res;
     }
 
     static http::response<http::string_body> handle_get_wallet_balance(int64_t user_id) {

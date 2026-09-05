@@ -130,7 +130,7 @@ bool SeedDataGenerator::clear_database() {
     }
     std::cout << "[Seed] Truncating all business tables and resetting sequences...\n";
     PgResultGuard res(conn->exec(
-        "TRUNCATE TABLE charging_orders, wallet_transaction_flows, piles, user_wallets, stations, users "
+        "TRUNCATE TABLE user_avatars, charging_orders, wallet_transaction_flows, piles, user_wallets, stations, users "
         "RESTART IDENTITY CASCADE;"
     ));
     if (!res.is_ok()) {

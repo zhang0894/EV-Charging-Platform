@@ -174,8 +174,9 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
             if (method == http::verb::get) return UserController::handle_get_profile(uid);
             if (method == http::verb::put) return UserController::handle_update_profile(uid, req);
         }
-        if (path == "/api/v1/user/avatar" && method == http::verb::post) {
-            return UserController::handle_upload_avatar(uid, req);
+        if (path == "/api/v1/user/avatar") {
+            if (method == http::verb::get) return UserController::handle_get_avatar(uid, req);
+            if (method == http::verb::post) return UserController::handle_upload_avatar(uid, req);
         }
         if ((path == "/api/v1/user/password" || path == "/api/v1/user/change-password") && (method == http::verb::post || method == http::verb::put)) {
             return UserController::handle_change_password(uid, req);
