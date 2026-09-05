@@ -111,11 +111,37 @@ struct OrderModel {
     int64_t updated_at{0};
 };
 
+struct ReservationModel {
+    std::string reservation_id;
+    int64_t user_id{0};
+    int64_t station_id{0};
+    std::string pile_id;
+    int64_t deposit_cents{2000};
+    int64_t penalty_fee_cents{0};
+    int64_t refund_amount_cents{0};
+    std::string status{"ACTIVE"}; // ACTIVE, FULFILLED, CANCELLED, TIMEOUT
+    int64_t created_at{0};
+    int64_t expire_at{0};
+    int64_t fulfilled_at{0};
+    int64_t cancelled_at{0};
+    int64_t updated_at{0};
+};
+
 // ==========================================
 // 接口请求 / 响应 DTO
 // ==========================================
 
 // 认证与用户 DTO
+struct CheckPhoneRequest {
+    std::string phone;
+};
+
+struct CheckPhoneResponseData {
+    std::string phone;
+    bool is_registered{false};
+    bool is_exists{false};
+};
+
 struct LoginRequest {
     std::string phone;
     std::string auth_type{"passwordless"};
@@ -444,6 +470,66 @@ struct OrderDetailResponseData {
     std::string stop_reason;
     int64_t settled_at{0};
     std::optional<RefundDetailDTO> refund_info;
+};
+
+// 充电桩预约 DTO
+struct ReservePileRequest {
+    std::string pile_id;
+};
+
+struct ReservePileResponseData {
+    std::string reservation_id;
+    std::string pile_id;
+    int64_t station_id{0};
+    std::string station_name;
+    double deposit{20.0};
+    int64_t deposit_cents{2000};
+    std::string status{"ACTIVE"};
+    int64_t created_at{0};
+    int64_t expire_at{0};
+    int timeout_seconds{120};
+    double wallet_balance{0.0};
+    int64_t wallet_balance_cents{0};
+};
+
+struct CancelReservationRequest {
+    std::string reservation_id;
+};
+
+struct CancelReservationResponseData {
+    std::string reservation_id;
+    std::string pile_id;
+    std::string status{"CANCELLED"};
+    double deposit{20.0};
+    int64_t deposit_cents{2000};
+    double penalty_fee{5.0};
+    int64_t penalty_fee_cents{500};
+    double refund_amount{15.0};
+    int64_t refund_amount_cents{1500};
+    double new_balance{0.0};
+    int64_t new_balance_cents{0};
+    int64_t cancelled_at{0};
+};
+
+struct ActiveReservationDTO {
+    std::string reservation_id;
+    int64_t user_id{0};
+    int64_t station_id{0};
+    std::string station_name;
+    std::string pile_id;
+    std::string pile_name;
+    std::string pile_type{"FAST"};
+    double deposit{20.0};
+    int64_t deposit_cents{2000};
+    std::string status{"ACTIVE"};
+    int64_t created_at{0};
+    int64_t expire_at{0};
+    int remaining_seconds{0};
+};
+
+struct ActiveReservationCheckResponseData {
+    bool has_active_reservation{false};
+    std::optional<ActiveReservationDTO> active_reservation;
 };
 
 // ==========================================

@@ -12,6 +12,25 @@ namespace ev {
 
 class AuthController {
 public:
+    static http::response<http::string_body> handle_check_phone(std::string_view phone) {
+        if (phone.empty()) {
+            return make_error_response(AppError::InvalidJsonPayload, "Missing phone parameter");
+        }
+        if (phone.size() != 11) {
+            return make_error_response(AppError::InvalidPhoneFormat);
+        }
+
+        auto res = DbRepository::instance().get_user_by_phone(phone);
+        bool exists = res.has_value();
+
+        CheckPhoneResponseData data{
+            .phone = std::string(phone),
+            .is_registered = exists,
+            .is_exists = exists
+        };
+        return make_success_response(data);
+    }
+
     static http::response<http::string_body> handle_user_login(const http::request<http::string_body>& req) {
         LoginRequest login_req;
         auto err = glz::read_json(login_req, req.body());

@@ -1686,7 +1686,7 @@ Result<AdminPileStatusOverviewData> DbRepository::get_admin_pile_status_overview
         std::string st = res.value(i, 0);
         int cnt = std::stoi(res.value(i, 1));
         total += cnt;
-        if (st == "CHARGING" || st == "PREPARING" || st == "FINISHING") in_use += cnt;
+        if (st == "CHARGING" || st == "PREPARING" || st == "FINISHING" || st == "RESERVED") in_use += cnt;
         else if (st == "IDLE") idle += cnt;
         else if (st == "FAULT" || st == "MAINTENANCE" || st == "OFFLINE") fault += cnt;
     }
@@ -1708,4 +1708,363 @@ Result<AdminPileStatusOverviewData> DbRepository::get_admin_pile_status_overview
     };
 }
 
+// ==========================================
+// 7. 充电桩预约
+// ==========================================
+
+Result<ReservePileResponseData> DbRepository::create_reservation(int64_t user_id, std::string_view pile_id) {
+    int64_t now = current_time_ms();
+    int64_t expire_at = now + 120000; // 2 分钟 (120s)
+    std::string res_id = std::format("RES_{}_{}", now, user_id);
+
+    return DbPool::instance().with_transaction([&](DbConnection& conn) -> Result<ReservePileResponseData> {
+        // 1. 检查用户是否有尚未结束且未超时的活跃预约
+        std::string check_user_sql = std::format(
+            "SELECT reservation_id FROM pile_reservations WHERE user_id = {} AND status = 'ACTIVE' AND expire_at > {};",
+            user_id, now
+        );
+        PgResultGuard u_res(conn.exec(check_user_sql.c_str()));
+        if (u_res.is_ok() && u_res.rows() > 0) {
+            return std::unexpected(AppError::ActiveOrderExists);
+        }
+
+        // 2. 检查电桩是否存在以及所属电站
+        std::string pile_sql = std::format(
+            "SELECT p.station_id, p.status, s.station_name, s.status FROM piles p JOIN stations s ON p.station_id = s.station_id WHERE p.pile_id = '{}' FOR UPDATE;",
+            pile_id
+        );
+        PgResultGuard p_res(conn.exec(pile_sql.c_str()));
+        if (!p_res.is_ok() || p_res.rows() == 0) {
+            return std::unexpected(AppError::ChargingPileNotFound);
+        }
+        int64_t st_id = std::stoll(p_res.value(0, 0));
+        std::string p_status = p_res.value(0, 1);
+        std::string st_name = p_res.value(0, 2);
+        int s_status = std::stoi(p_res.value(0, 3));
+
+        if (s_status == 2) {
+            return std::unexpected(AppError::StationNotFound);
+        }
+        if (p_status != "IDLE") {
+            return std::unexpected(AppError::PileBusyOrReserved);
+        }
+
+        // 3. 锁定钱包并检查余额 (需要 >= 20.00元, 即 2000分)
+        std::string w_sql = std::format("SELECT balance_cents, status FROM user_wallets WHERE user_id = {} FOR UPDATE;", user_id);
+        PgResultGuard w_res(conn.exec(w_sql.c_str()));
+        if (!w_res.is_ok() || w_res.rows() == 0) return std::unexpected(AppError::UserNotFound);
+        if (std::stoi(w_res.value(0, 1)) == 2) return std::unexpected(AppError::UserAccountFrozen);
+
+        int64_t before_balance = std::stoll(w_res.value(0, 0));
+        if (before_balance < 2000) {
+            return std::unexpected(AppError::InsufficientBalance);
+        }
+
+        int64_t after_balance = before_balance - 2000;
+
+        // 4. 扣除 20元 押金
+        std::string update_wallet = std::format(
+            "UPDATE user_wallets SET balance_cents = {}, updated_at = {} WHERE user_id = {};",
+            after_balance, now, user_id
+        );
+        conn.exec(update_wallet.c_str());
+
+        // 5. 插入预约单
+        std::string insert_res = std::format(
+            "INSERT INTO pile_reservations (reservation_id, user_id, station_id, pile_id, deposit_cents, penalty_fee_cents, refund_amount_cents, status, created_at, expire_at, fulfilled_at, cancelled_at, updated_at) "
+            "VALUES ('{}', {}, {}, '{}', 2000, 0, 0, 'ACTIVE', {}, {}, 0, 0, {});",
+            res_id, user_id, st_id, pile_id, now, expire_at, now
+        );
+        conn.exec(insert_res.c_str());
+
+        // 6. 更新充电桩状态为 RESERVED
+        std::string update_pile = std::format(
+            "UPDATE piles SET status = 'RESERVED', updated_at = {} WHERE pile_id = '{}';",
+            now, pile_id
+        );
+        conn.exec(update_pile.c_str());
+
+        // 7. 记录财务流水
+        std::string tx_id = std::format("TX_RES_DEP_{}_{}", now, user_id);
+        std::string insert_flow = std::format(
+            "INSERT INTO wallet_transaction_flows (id, user_id, flow_type, amount_cents, balance_before_cents, balance_after_cents, related_order_id, operator_id, remark, idempotent_key, created_at) "
+            "VALUES ('{}', {}, 5, -2000, {}, {}, '{}', 0, '预约充电桩押金支付', 'IDEM_{}', {});",
+            tx_id, user_id, before_balance, after_balance, res_id, tx_id, now
+        );
+        conn.exec(insert_flow.c_str());
+
+        RedisCache::instance().del(std::format("cache:wallet:{}", user_id));
+        RedisCache::instance().del_prefix("cache:dashboard:");
+
+        return ReservePileResponseData{
+            .reservation_id = res_id,
+            .pile_id = std::string(pile_id),
+            .station_id = st_id,
+            .station_name = st_name,
+            .deposit = 20.0,
+            .deposit_cents = 2000,
+            .status = "ACTIVE",
+            .created_at = now,
+            .expire_at = expire_at,
+            .timeout_seconds = 120,
+            .wallet_balance = cents_to_yuan(after_balance),
+            .wallet_balance_cents = after_balance
+        };
+    });
+}
+
+Result<std::optional<ReservationModel>> DbRepository::get_active_reservation_by_user(int64_t user_id) {
+    auto conn = DbPool::instance().acquire_reader();
+    if (!conn) return std::unexpected(AppError::DatabaseError);
+
+    int64_t now = current_time_ms();
+    std::string sql = std::format(
+        "SELECT reservation_id, user_id, station_id, pile_id, deposit_cents, penalty_fee_cents, refund_amount_cents, status, created_at, expire_at, fulfilled_at, cancelled_at, updated_at "
+        "FROM pile_reservations WHERE user_id = {} AND status = 'ACTIVE' AND expire_at > {} ORDER BY created_at DESC LIMIT 1;",
+        user_id, now
+    );
+    PgResultGuard res(conn->exec(sql.c_str()));
+    if (!res.is_ok() || res.rows() == 0) {
+        return std::optional<ReservationModel>{std::nullopt};
+    }
+
+    return std::optional<ReservationModel>{ReservationModel{
+        .reservation_id = res.value(0, 0),
+        .user_id = std::stoll(res.value(0, 1)),
+        .station_id = std::stoll(res.value(0, 2)),
+        .pile_id = res.value(0, 3),
+        .deposit_cents = std::stoll(res.value(0, 4)),
+        .penalty_fee_cents = std::stoll(res.value(0, 5)),
+        .refund_amount_cents = std::stoll(res.value(0, 6)),
+        .status = res.value(0, 7),
+        .created_at = std::stoll(res.value(0, 8)),
+        .expire_at = std::stoll(res.value(0, 9)),
+        .fulfilled_at = std::stoll(res.value(0, 10)),
+        .cancelled_at = std::stoll(res.value(0, 11)),
+        .updated_at = std::stoll(res.value(0, 12))
+    }};
+}
+
+Result<std::optional<ReservationModel>> DbRepository::get_active_reservation_by_pile(std::string_view pile_id) {
+    auto conn = DbPool::instance().acquire_reader();
+    if (!conn) return std::unexpected(AppError::DatabaseError);
+
+    int64_t now = current_time_ms();
+    std::string sql = std::format(
+        "SELECT reservation_id, user_id, station_id, pile_id, deposit_cents, penalty_fee_cents, refund_amount_cents, status, created_at, expire_at, fulfilled_at, cancelled_at, updated_at "
+        "FROM pile_reservations WHERE pile_id = '{}' AND status = 'ACTIVE' AND expire_at > {} ORDER BY created_at DESC LIMIT 1;",
+        pile_id, now
+    );
+    PgResultGuard res(conn->exec(sql.c_str()));
+    if (!res.is_ok() || res.rows() == 0) {
+        return std::optional<ReservationModel>{std::nullopt};
+    }
+
+    return std::optional<ReservationModel>{ReservationModel{
+        .reservation_id = res.value(0, 0),
+        .user_id = std::stoll(res.value(0, 1)),
+        .station_id = std::stoll(res.value(0, 2)),
+        .pile_id = res.value(0, 3),
+        .deposit_cents = std::stoll(res.value(0, 4)),
+        .penalty_fee_cents = std::stoll(res.value(0, 5)),
+        .refund_amount_cents = std::stoll(res.value(0, 6)),
+        .status = res.value(0, 7),
+        .created_at = std::stoll(res.value(0, 8)),
+        .expire_at = std::stoll(res.value(0, 9)),
+        .fulfilled_at = std::stoll(res.value(0, 10)),
+        .cancelled_at = std::stoll(res.value(0, 11)),
+        .updated_at = std::stoll(res.value(0, 12))
+    }};
+}
+
+Result<CancelReservationResponseData> DbRepository::cancel_reservation(int64_t user_id, std::string_view reservation_id) {
+    int64_t now = current_time_ms();
+
+    return DbPool::instance().with_transaction([&](DbConnection& conn) -> Result<CancelReservationResponseData> {
+        std::string sql;
+        if (reservation_id.empty()) {
+            sql = std::format(
+                "SELECT reservation_id, pile_id, deposit_cents, status, expire_at FROM pile_reservations "
+                "WHERE user_id = {} AND status = 'ACTIVE' AND expire_at > {} ORDER BY created_at DESC LIMIT 1 FOR UPDATE;",
+                user_id, now
+            );
+        } else {
+            sql = std::format(
+                "SELECT reservation_id, pile_id, deposit_cents, status, expire_at FROM pile_reservations "
+                "WHERE reservation_id = '{}' AND user_id = {} FOR UPDATE;",
+                reservation_id, user_id
+            );
+        }
+
+        PgResultGuard res(conn.exec(sql.c_str()));
+        if (!res.is_ok() || res.rows() == 0) {
+            return std::unexpected(AppError::NoActiveOrderFound);
+        }
+
+        std::string res_id = res.value(0, 0);
+        std::string pile_id = res.value(0, 1);
+        int64_t deposit_cents = std::stoll(res.value(0, 2));
+        std::string status = res.value(0, 3);
+        int64_t expire_at = std::stoll(res.value(0, 4));
+
+        if (status != "ACTIVE" || now >= expire_at) {
+            return std::unexpected(AppError::OrderCannotBeStopped);
+        }
+
+        // 扣除 5 元手续费 (500分)，退还 15 元 (1500分)
+        int64_t penalty_cents = 500;
+        int64_t refund_cents = deposit_cents - penalty_cents; // 1500
+
+        // 锁定钱包退款
+        std::string w_sql = std::format("SELECT balance_cents FROM user_wallets WHERE user_id = {} FOR UPDATE;", user_id);
+        PgResultGuard w_res(conn.exec(w_sql.c_str()));
+        if (!w_res.is_ok() || w_res.rows() == 0) return std::unexpected(AppError::UserNotFound);
+
+        int64_t before_cents = std::stoll(w_res.value(0, 0));
+        int64_t after_cents = before_cents + refund_cents;
+
+        std::string u_wallet = std::format(
+            "UPDATE user_wallets SET balance_cents = {}, updated_at = {} WHERE user_id = {};",
+            after_cents, now, user_id
+        );
+        conn.exec(u_wallet.c_str());
+
+        // 更新预约单状态为 CANCELLED
+        std::string u_res_sql = std::format(
+            "UPDATE pile_reservations SET status = 'CANCELLED', penalty_fee_cents = {}, refund_amount_cents = {}, cancelled_at = {}, updated_at = {} WHERE reservation_id = '{}';",
+            penalty_cents, refund_cents, now, now, res_id
+        );
+        conn.exec(u_res_sql.c_str());
+
+        // 恢复电桩为 IDLE
+        std::string u_pile_sql = std::format(
+            "UPDATE piles SET status = 'IDLE', updated_at = {} WHERE pile_id = '{}';",
+            now, pile_id
+        );
+        conn.exec(u_pile_sql.c_str());
+
+        // 记录退款流水
+        std::string tx_id = std::format("TX_RES_REF_{}_{}", now, user_id);
+        std::string insert_flow = std::format(
+            "INSERT INTO wallet_transaction_flows (id, user_id, flow_type, amount_cents, balance_before_cents, balance_after_cents, related_order_id, operator_id, remark, idempotent_key, created_at) "
+            "VALUES ('{}', {}, 6, {}, {}, {}, '{}', 0, '取消预约押金退还(扣除5元手续费)', 'IDEM_{}', {});",
+            tx_id, user_id, refund_cents, before_cents, after_cents, res_id, tx_id, now
+        );
+        conn.exec(insert_flow.c_str());
+
+        RedisCache::instance().del(std::format("cache:wallet:{}", user_id));
+        RedisCache::instance().del_prefix("cache:dashboard:");
+
+        return CancelReservationResponseData{
+            .reservation_id = res_id,
+            .pile_id = pile_id,
+            .status = "CANCELLED",
+            .deposit = cents_to_yuan(deposit_cents),
+            .deposit_cents = deposit_cents,
+            .penalty_fee = cents_to_yuan(penalty_cents),
+            .penalty_fee_cents = penalty_cents,
+            .refund_amount = cents_to_yuan(refund_cents),
+            .refund_amount_cents = refund_cents,
+            .new_balance = cents_to_yuan(after_cents),
+            .new_balance_cents = after_cents,
+            .cancelled_at = now
+        };
+    });
+}
+
+Result<void> DbRepository::fulfill_reservation(int64_t user_id, std::string_view pile_id) {
+    int64_t now = current_time_ms();
+
+    return DbPool::instance().with_transaction([&](DbConnection& conn) -> Result<void> {
+        std::string sql = std::format(
+            "SELECT reservation_id, deposit_cents FROM pile_reservations "
+            "WHERE user_id = {} AND pile_id = '{}' AND status = 'ACTIVE' AND expire_at > {} ORDER BY created_at DESC LIMIT 1 FOR UPDATE;",
+            user_id, pile_id, now
+        );
+        PgResultGuard res(conn.exec(sql.c_str()));
+        if (!res.is_ok() || res.rows() == 0) {
+            return {}; // 没有活跃预约单，无需履约退押金
+        }
+
+        std::string res_id = res.value(0, 0);
+        int64_t deposit_cents = std::stoll(res.value(0, 1)); // 2000
+
+        // 全额退还 20 元押金
+        std::string w_sql = std::format("SELECT balance_cents FROM user_wallets WHERE user_id = {} FOR UPDATE;", user_id);
+        PgResultGuard w_res(conn.exec(w_sql.c_str()));
+        if (!w_res.is_ok() || w_res.rows() == 0) return std::unexpected(AppError::UserNotFound);
+
+        int64_t before_cents = std::stoll(w_res.value(0, 0));
+        int64_t after_cents = before_cents + deposit_cents;
+
+        std::string u_wallet = std::format(
+            "UPDATE user_wallets SET balance_cents = {}, updated_at = {} WHERE user_id = {};",
+            after_cents, now, user_id
+        );
+        conn.exec(u_wallet.c_str());
+
+        // 更新预约单为 FULFILLED
+        std::string u_res_sql = std::format(
+            "UPDATE pile_reservations SET status = 'FULFILLED', refund_amount_cents = {}, fulfilled_at = {}, updated_at = {} WHERE reservation_id = '{}';",
+            deposit_cents, now, now, res_id
+        );
+        conn.exec(u_res_sql.c_str());
+
+        // 记录流水
+        std::string tx_id = std::format("TX_RES_FUL_{}_{}", now, user_id);
+        std::string insert_flow = std::format(
+            "INSERT INTO wallet_transaction_flows (id, user_id, flow_type, amount_cents, balance_before_cents, balance_after_cents, related_order_id, operator_id, remark, idempotent_key, created_at) "
+            "VALUES ('{}', {}, 6, {}, {}, {}, '{}', 0, '预约到场充电押金全额退还', 'IDEM_{}', {});",
+            tx_id, user_id, deposit_cents, before_cents, after_cents, res_id, tx_id, now
+        );
+        conn.exec(insert_flow.c_str());
+
+        RedisCache::instance().del(std::format("cache:wallet:{}", user_id));
+        RedisCache::instance().del_prefix("cache:dashboard:");
+        return {};
+    });
+}
+
+Result<std::vector<std::string>> DbRepository::timeout_expired_reservations() {
+    int64_t now = current_time_ms();
+    std::vector<std::string> expired_piles;
+
+    auto res = DbPool::instance().with_transaction([&](DbConnection& conn) -> Result<std::vector<std::string>> {
+        std::string sql = std::format(
+            "SELECT reservation_id, pile_id, user_id FROM pile_reservations "
+            "WHERE status = 'ACTIVE' AND expire_at <= {} FOR UPDATE;",
+            now
+        );
+        PgResultGuard q_res(conn.exec(sql.c_str()));
+        if (!q_res.is_ok() || q_res.rows() == 0) {
+            return expired_piles;
+        }
+
+        for (int i = 0; i < q_res.rows(); ++i) {
+            std::string res_id = q_res.value(i, 0);
+            std::string pile_id = q_res.value(i, 1);
+            expired_piles.push_back(pile_id);
+
+            // 标记为 TIMEOUT，没收全部押金 (penalty_fee_cents = 2000, refund = 0)
+            std::string u_res = std::format(
+                "UPDATE pile_reservations SET status = 'TIMEOUT', penalty_fee_cents = 2000, refund_amount_cents = 0, updated_at = {} WHERE reservation_id = '{}';",
+                now, res_id
+            );
+            conn.exec(u_res.c_str());
+
+            // 桩恢复为 IDLE
+            std::string u_pile = std::format(
+                "UPDATE piles SET status = 'IDLE', updated_at = {} WHERE pile_id = '{}';",
+                now, pile_id
+            );
+            conn.exec(u_pile.c_str());
+        }
+
+        return expired_piles;
+    });
+
+    return res;
+}
+
 } // namespace ev
+

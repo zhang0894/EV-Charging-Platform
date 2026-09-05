@@ -88,6 +88,16 @@ public:
     Result<AdminRevenueTrendData> get_admin_revenue_trend(int days = 7);
     Result<AdminPileStatusOverviewData> get_admin_pile_status_overview();
 
+    // ==========================================
+    // 7. 充电桩预约
+    // ==========================================
+    Result<ReservePileResponseData> create_reservation(int64_t user_id, std::string_view pile_id);
+    Result<std::optional<ReservationModel>> get_active_reservation_by_user(int64_t user_id);
+    Result<std::optional<ReservationModel>> get_active_reservation_by_pile(std::string_view pile_id);
+    Result<CancelReservationResponseData> cancel_reservation(int64_t user_id, std::string_view reservation_id);
+    Result<void> fulfill_reservation(int64_t user_id, std::string_view pile_id);
+    Result<std::vector<std::string>> timeout_expired_reservations();
+
 private:
     DbRepository() = default;
 };

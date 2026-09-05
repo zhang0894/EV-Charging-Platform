@@ -52,6 +52,12 @@ struct PileRuntimeState {
     int64_t user_id{0};
     int64_t start_time{0};
     int64_t last_update_time{0};
+
+    // 预约与模拟标记
+    bool is_simulated{false};
+    int64_t reserved_user_id{0};
+    std::string reservation_id;
+    int64_t reservation_expire_time{0};
 };
 
 struct StationPileSummary {
@@ -61,6 +67,7 @@ struct StationPileSummary {
     int slow_piles_idle{0};
     int busy_piles{0};
     int fault_piles{0};
+    int reserved_piles{0};
     bool has_fast_pile{false};
 };
 
@@ -134,19 +141,39 @@ public:
             if (p.station_id >= 1 && static_cast<size_t>(p.station_id) < station_pile_ids_.size()) {
                 station_pile_ids_[p.station_id].push_back(p.pile_id);
             }
+
+            // 智能数据模拟：各站首桩始终保持 IDLE 方便测试；其余桩模拟约 25% 占用率
+            std::string st = p.status;
+            bool is_first_pile = p.pile_id.ends_with("_01");
+            if (is_first_pile) {
+                st = "IDLE";
+            } else if (st == "IDLE") {
+                size_t h = std::hash<std::string>{}(p.pile_id);
+                if (h % 100 < 25) {
+                    st = "CHARGING";
+                }
+            }
+
+            bool is_chg = (st == "CHARGING");
+            int init_soc = is_chg ? (30 + static_cast<int>(std::hash<std::string>{}(p.pile_id) % 55)) : 0;
+            double chg_power = is_chg ? (p.type == "FAST" ? (60.0 + (init_soc % 60)) : 7.0) : 0.0;
+            double volt = is_chg ? (380.0 + init_soc * 0.4) : 0.0;
+            double curr = (is_chg && volt > 0) ? (chg_power * 1000.0 / volt) : 0.0;
+            std::string sim_order = is_chg ? std::format("SIM_ORD_{}_{}", p.pile_id, now) : "";
+
             piles_[p.pile_id] = PileRuntimeState{
                 .pile_id = p.pile_id,
                 .station_id = p.station_id,
                 .pile_name = p.pile_name,
                 .type = p.type,
                 .max_power_kw = p.max_power_kw,
-                .status = p.status,
-                .voltage_v = (p.status == "CHARGING" ? 398.0 : 0.0),
-                .current_a = (p.status == "CHARGING" ? 150.0 : 0.0),
-                .power_kw = (p.status == "CHARGING" ? p.max_power_kw * 0.8 : 0.0),
-                .current_soc = (p.status == "CHARGING" ? 50 : 0),
-                .temperature_celsius = 25.0,
-                .charged_energy_kwh = 0.0,
+                .status = st,
+                .voltage_v = volt,
+                .current_a = curr,
+                .power_kw = chg_power,
+                .current_soc = init_soc,
+                .temperature_celsius = is_chg ? (30.0 + (init_soc * 0.15)) : 25.0,
+                .charged_energy_kwh = is_chg ? (15.0 + (init_soc * 0.3)) : 0.0,
                 .electricity_price = 1.45,
                 .electricity_fee_cents = 0,
                 .service_price = 0.35,
@@ -158,11 +185,19 @@ public:
                 .overtime_duration_minutes = 0,
                 .overtime_fee_cents = 0,
                 .total_fee_cents = 0,
-                .active_order_id = "",
+                .active_order_id = sim_order,
                 .user_id = 0,
-                .start_time = 0,
-                .last_update_time = now
+                .start_time = is_chg ? (now - 1200000) : 0,
+                .last_update_time = now,
+                .is_simulated = is_chg,
+                .reserved_user_id = 0,
+                .reservation_id = "",
+                .reservation_expire_time = 0
             };
+
+            if (is_chg) {
+                active_charging_pile_ids_.insert(p.pile_id);
+            }
         }
         return true;
     }
@@ -193,19 +228,35 @@ public:
                 double power = is_fast ? 120.0 : 7.0;
                 std::string pname = std::format("{}-{}号{}", s.name, i, (is_fast ? "快充桩" : "慢充桩"));
 
+                std::string st = "IDLE";
+                if (i == 1) {
+                    st = "IDLE"; // 1号桩保持空闲
+                } else if (i == 4 && count > 10) {
+                    st = "FAULT";
+                } else if (i % 4 == 0 || i % 7 == 0) {
+                    st = "CHARGING";
+                }
+
+                bool is_chg = (st == "CHARGING");
+                int init_soc = is_chg ? (35 + (i * 7) % 50) : 0;
+                double chg_power = is_chg ? (is_fast ? 90.0 : 7.0) : 0.0;
+                double volt = is_chg ? (380.0 + init_soc * 0.4) : 0.0;
+                double curr = (is_chg && volt > 0) ? (chg_power * 1000.0 / volt) : 0.0;
+                std::string sim_order = is_chg ? std::format("SIM_ORD_{}_{}", pid, now) : "";
+
                 piles_[pid] = PileRuntimeState{
                     .pile_id = pid,
                     .station_id = s.station_id,
                     .pile_name = pname,
                     .type = ptype,
                     .max_power_kw = power,
-                    .status = "IDLE",
-                    .voltage_v = 0.0,
-                    .current_a = 0.0,
-                    .power_kw = 0.0,
-                    .current_soc = 0,
-                    .temperature_celsius = 25.0,
-                    .charged_energy_kwh = 0.0,
+                    .status = st,
+                    .voltage_v = volt,
+                    .current_a = curr,
+                    .power_kw = chg_power,
+                    .current_soc = init_soc,
+                    .temperature_celsius = is_chg ? (30.0 + (init_soc * 0.15)) : 25.0,
+                    .charged_energy_kwh = is_chg ? (12.0 + (init_soc * 0.25)) : 0.0,
                     .electricity_price = 1.45,
                     .electricity_fee_cents = 0,
                     .service_price = 0.35,
@@ -217,11 +268,19 @@ public:
                     .overtime_duration_minutes = 0,
                     .overtime_fee_cents = 0,
                     .total_fee_cents = 0,
-                    .active_order_id = "",
+                    .active_order_id = sim_order,
                     .user_id = 0,
-                    .start_time = 0,
-                    .last_update_time = now
+                    .start_time = is_chg ? (now - 1200000) : 0,
+                    .last_update_time = now,
+                    .is_simulated = is_chg,
+                    .reserved_user_id = 0,
+                    .reservation_id = "",
+                    .reservation_expire_time = 0
                 };
+
+                if (is_chg) {
+                    active_charging_pile_ids_.insert(pid);
+                }
 
                 s_piles.push_back(pid);
             }
@@ -235,6 +294,7 @@ public:
         active_charging_pile_ids_.clear();
         station_pile_ids_.clear();
 
+        int64_t now = current_time_ms();
         for (const auto& p : piles) {
             if (p.station_id >= 0) {
                 if (static_cast<size_t>(p.station_id) >= station_pile_ids_.size()) {
@@ -243,22 +303,46 @@ public:
                 station_pile_ids_[p.station_id].push_back(p.pile_id);
             }
 
+            std::string st = p.status;
+            bool is_first_pile = p.pile_id.ends_with("_01");
+            if (is_first_pile) {
+                st = "IDLE";
+            } else if (st == "IDLE") {
+                size_t h = std::hash<std::string>{}(p.pile_id);
+                if (h % 100 < 25) {
+                    st = "CHARGING";
+                }
+            }
+
+            bool is_chg = (st == "CHARGING");
+            int init_soc = is_chg ? (30 + static_cast<int>(std::hash<std::string>{}(p.pile_id) % 55)) : 0;
+            double chg_power = is_chg ? (p.type == "FAST" ? 80.0 : 7.0) : 0.0;
+            double volt = is_chg ? (380.0 + init_soc * 0.4) : 0.0;
+            double curr = (is_chg && volt > 0) ? (chg_power * 1000.0 / volt) : 0.0;
+            std::string sim_order = is_chg ? std::format("SIM_ORD_{}_{}", p.pile_id, now) : "";
+
             piles_[p.pile_id] = PileRuntimeState{
                 .pile_id = p.pile_id,
                 .station_id = p.station_id,
                 .pile_name = p.pile_name,
                 .type = p.type,
                 .max_power_kw = p.max_power_kw,
-                .status = p.status,
-                .voltage_v = (p.status == "CHARGING" ? 398.0 : 0.0),
-                .current_a = (p.status == "CHARGING" ? 150.0 : 0.0),
-                .power_kw = (p.status == "CHARGING" ? p.max_power_kw * 0.8 : 0.0),
-                .current_soc = (p.status == "CHARGING" ? 50 : 0),
+                .status = st,
+                .voltage_v = volt,
+                .current_a = curr,
+                .power_kw = chg_power,
+                .current_soc = init_soc,
                 .temperature_celsius = 25.0,
-                .charged_energy_kwh = 0.0,
-                .last_update_time = current_time_ms()
+                .charged_energy_kwh = is_chg ? 15.0 : 0.0,
+                .active_order_id = sim_order,
+                .start_time = is_chg ? (now - 1200000) : 0,
+                .last_update_time = now,
+                .is_simulated = is_chg,
+                .reserved_user_id = 0,
+                .reservation_id = "",
+                .reservation_expire_time = 0
             };
-            if (p.status == "CHARGING") {
+            if (is_chg) {
                 active_charging_pile_ids_.insert(p.pile_id);
             }
         }
@@ -314,6 +398,9 @@ public:
                 else sum.slow_piles_idle++;
             } else if (p.status == "CHARGING" || p.status == "PREPARING" || p.status == "FINISHING") {
                 sum.busy_piles++;
+            } else if (p.status == "RESERVED") {
+                sum.busy_piles++;
+                sum.reserved_piles++;
             } else if (p.status == "FAULT" || p.status == "MAINTENANCE" || p.status == "OFFLINE") {
                 sum.fault_piles++;
             }
@@ -386,10 +473,21 @@ public:
         if (it == piles_.end()) return false;
 
         auto& p = it->second;
-        if (p.status != "IDLE") return false;
+        if (p.status != "IDLE") {
+            // 如果是被当前用户预约的桩，允许开枪；他人或其他状态不可用
+            if (p.status == "RESERVED" && p.reserved_user_id == user_id) {
+                // 预约车主到场开枪
+            } else {
+                return false;
+            }
+        }
 
         int64_t now = current_time_ms();
         p.status = "CHARGING";
+        p.is_simulated = false;
+        p.reserved_user_id = 0;
+        p.reservation_id.clear();
+        p.reservation_expire_time = 0;
         active_charging_pile_ids_.insert(std::string(pile_id));
         p.active_order_id = std::string(order_id);
         p.user_id = user_id;
@@ -424,6 +522,10 @@ public:
 
         auto& p = it->second;
         p.status = "IDLE";
+        p.is_simulated = false;
+        p.reserved_user_id = 0;
+        p.reservation_id.clear();
+        p.reservation_expire_time = 0;
         active_charging_pile_ids_.erase(std::string(pile_id));
         p.voltage_v = 0.0;
         p.current_a = 0.0;
@@ -431,6 +533,71 @@ public:
         p.last_update_time = current_time_ms();
 
         return p;
+    }
+
+    bool reserve_pile(std::string_view pile_id, int64_t user_id, std::string_view reservation_id, int64_t expire_time) {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        auto it = piles_.find(std::string(pile_id));
+        if (it == piles_.end()) return false;
+        if (it->second.status != "IDLE") return false;
+
+        it->second.status = "RESERVED";
+        it->second.is_simulated = false;
+        it->second.reserved_user_id = user_id;
+        it->second.reservation_id = std::string(reservation_id);
+        it->second.reservation_expire_time = expire_time;
+        it->second.last_update_time = current_time_ms();
+        return true;
+    }
+
+    bool release_reserved_pile(std::string_view pile_id) {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        auto it = piles_.find(std::string(pile_id));
+        if (it == piles_.end()) return false;
+        if (it->second.status == "RESERVED") {
+            it->second.status = "IDLE";
+            it->second.reserved_user_id = 0;
+            it->second.reservation_id.clear();
+            it->second.reservation_expire_time = 0;
+            it->second.last_update_time = current_time_ms();
+            return true;
+        }
+        return false;
+    }
+
+    void maintain_simulation(int64_t now) {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        if (active_charging_pile_ids_.size() < 1500) {
+            static uint32_t station_cursor = 1;
+            int added = 0;
+            for (size_t i = 0; i < 30 && added < 3; ++i) {
+                station_cursor = (station_cursor % STATIC_STATION_COUNT) + 1;
+                if (station_cursor >= station_pile_ids_.size()) continue;
+
+                const auto& pids = station_pile_ids_[station_cursor];
+                for (size_t j = 1; j < pids.size() && added < 3; ++j) {
+                    auto it = piles_.find(pids[j]);
+                    if (it != piles_.end() && it->second.status == "IDLE") {
+                        auto& p = it->second;
+                        p.status = "CHARGING";
+                        p.is_simulated = true;
+                        p.current_soc = 25 + static_cast<int>(now % 30);
+                        p.power_kw = (p.type == "FAST" ? 90.0 : 7.0);
+                        p.voltage_v = 380.0;
+                        p.current_a = p.power_kw * 1000.0 / p.voltage_v;
+                        p.charged_energy_kwh = 5.0;
+                        p.is_full = false;
+                        p.full_timestamp = 0;
+                        p.active_order_id = std::format("SIM_ORD_{}_{}", p.pile_id, now);
+                        p.start_time = now;
+                        p.last_update_time = now;
+                        active_charging_pile_ids_.insert(p.pile_id);
+                        added++;
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     void set_pile_status(std::string_view pile_id, std::string_view status) {

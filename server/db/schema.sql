@@ -122,3 +122,24 @@ CREATE INDEX IF NOT EXISTS idx_orders_user_id ON charging_orders(user_id, create
 CREATE INDEX IF NOT EXISTS idx_orders_station_id ON charging_orders(station_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_orders_pile_id ON charging_orders(pile_id);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON charging_orders(order_status);
+
+-- 7. 充电桩预约表
+CREATE TABLE IF NOT EXISTS pile_reservations (
+    reservation_id VARCHAR(64) PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(user_id),
+    station_id BIGINT NOT NULL REFERENCES stations(station_id),
+    pile_id VARCHAR(32) NOT NULL REFERENCES piles(pile_id),
+    deposit_cents BIGINT NOT NULL DEFAULT 2000,
+    penalty_fee_cents BIGINT NOT NULL DEFAULT 0,
+    refund_amount_cents BIGINT NOT NULL DEFAULT 0,
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE', -- 'ACTIVE', 'FULFILLED', 'CANCELLED', 'TIMEOUT'
+    created_at BIGINT NOT NULL,
+    expire_at BIGINT NOT NULL,
+    fulfilled_at BIGINT DEFAULT 0,
+    cancelled_at BIGINT DEFAULT 0,
+    updated_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_res_user ON pile_reservations(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_res_pile ON pile_reservations(pile_id, status);
+

@@ -67,24 +67,43 @@ public:
             return make_error_response(AppError::ActiveOrderExists, "Please settle existing active order first");
         }
 
-        // 2. 检查钱包余额是否满足最低起充门槛 (20元)
-        auto w_res = DbRepository::instance().get_wallet(user_id);
-        if (!w_res || w_res->balance_cents < 2000) {
-            return make_error_response(AppError::InsufficientBalance, "Wallet balance must be at least 20.00 RMB to start charging");
-        }
-
-        // 3. 校验充电桩存在与空闲状态
+        // 2. 校验充电桩存在与状态
         auto p_pool = ChargingStatePool::instance().get_pile_state(start_req.pile_id);
         if (!p_pool) {
             return make_error_response(AppError::ChargingPileNotFound, "Charging pile not found");
         }
-        if (p_pool->status != "IDLE") {
+
+        bool is_user_reserved = false;
+        if (p_pool->status == "RESERVED") {
+            if (p_pool->reserved_user_id == user_id) {
+                is_user_reserved = true;
+            } else {
+                return make_error_response(AppError::PileBusyOrReserved, "Charging pile is reserved by another user");
+            }
+        } else if (p_pool->status != "IDLE") {
             return make_error_response(AppError::PileBusyOrReserved, "Charging pile is not in IDLE state");
         }
 
         int64_t st_id = p_pool->station_id;
         if (!StationStatusManager::instance().is_online(st_id)) {
             return make_error_response(AppError::StationNotFound, "Charging station is offline");
+        }
+
+        // 3. 如果是该用户预约的桩，视作用户到场，先核销预约并将20元押金全额退回钱包
+        if (is_user_reserved) {
+            auto ful_res = DbRepository::instance().fulfill_reservation(user_id, start_req.pile_id);
+            if (!ful_res) {
+                return make_error_response(ful_res.error());
+            }
+        }
+
+        // 4. 检查钱包余额是否满足最低起充门槛 (20元)
+        auto w_res = DbRepository::instance().get_wallet(user_id);
+        if (!w_res || w_res->balance_cents < 2000) {
+            if (is_user_reserved) {
+                ChargingStatePool::instance().release_reserved_pile(start_req.pile_id);
+            }
+            return make_error_response(AppError::InsufficientBalance, "Wallet balance must be at least 20.00 RMB to start charging");
         }
 
         std::string st_name;
@@ -110,7 +129,7 @@ public:
         int64_t now = current_time_ms();
         std::string order_id = std::format("ORD_{}_{}", now, user_id);
 
-        // 4. 更新内存状态池为 CHARGING
+        // 5. 更新内存状态池为 CHARGING
         bool pool_ok = ChargingStatePool::instance().start_charging(
             start_req.pile_id,
             order_id,
@@ -126,7 +145,7 @@ public:
             return make_error_response(AppError::PileBusyOrReserved);
         }
 
-        // 5. 写入数据库持久化
+        // 6. 写入数据库持久化
         OrderModel order{
             .order_id = order_id,
             .user_id = user_id,
@@ -153,11 +172,12 @@ public:
         }
 
         // 广播桩状态变动通知
+        std::string old_st = is_user_reserved ? "RESERVED" : "IDLE";
         WsManager::instance().broadcast_pile_status(PileStatusChangedBroadcastFrame{
             .event = "PILE_STATUS_CHANGED",
             .station_id = st_id,
             .pile_id = start_req.pile_id,
-            .old_status = "IDLE",
+            .old_status = old_st,
             .new_status = "CHARGING",
             .new_status_code = 3,
             .timestamp = now
@@ -360,6 +380,165 @@ public:
                 .reason = o_res->refund_reason,
                 .refunded_at = o_res->refunded_at
             };
+        }
+
+        return make_success_response(data);
+    }
+
+    static http::response<http::string_body> handle_reserve_pile(
+        int64_t user_id,
+        const http::request<http::string_body>& req
+    ) {
+        ReservePileRequest reserve_req;
+        auto err = glz::read_json(reserve_req, req.body());
+        if (err || reserve_req.pile_id.empty()) {
+            return make_error_response(AppError::InvalidJsonPayload, "Missing or invalid pile_id");
+        }
+
+        // 1. 检查是否有进行中的充电订单
+        auto act_res = DbRepository::instance().get_active_order_by_user(user_id);
+        if (act_res && act_res->has_value()) {
+            return make_error_response(AppError::ActiveOrderExists, "Please settle existing active order before making a reservation");
+        }
+
+        // 2. 检查是否有生效中的预约
+        auto act_reservation = DbRepository::instance().get_active_reservation_by_user(user_id);
+        if (act_reservation && act_reservation->has_value()) {
+            return make_error_response(AppError::ActiveOrderExists, "You already have an active pile reservation");
+        }
+
+        // 3. 校验充电桩是否存在及空闲
+        auto p_pool = ChargingStatePool::instance().get_pile_state(reserve_req.pile_id);
+        if (!p_pool) {
+            return make_error_response(AppError::ChargingPileNotFound, "Charging pile not found");
+        }
+        if (p_pool->status != "IDLE") {
+            return make_error_response(AppError::PileBusyOrReserved, "Charging pile is not idle");
+        }
+
+        int64_t st_id = p_pool->station_id;
+        if (!StationStatusManager::instance().is_online(st_id)) {
+            return make_error_response(AppError::StationNotFound, "Charging station is offline");
+        }
+
+        // 4. 创建预约记录并扣减20元押金 (2000分, 120秒超时)
+        auto res = DbRepository::instance().create_reservation(user_id, reserve_req.pile_id);
+        if (!res) {
+            return make_error_response(res.error());
+        }
+
+        // 5. 更新状态池中的桩为 RESERVED 锁定状态
+        bool pool_ok = ChargingStatePool::instance().reserve_pile(
+            reserve_req.pile_id,
+            user_id,
+            res->reservation_id,
+            res->expire_at
+        );
+        if (!pool_ok) {
+            DbRepository::instance().cancel_reservation(user_id, res->reservation_id);
+            return make_error_response(AppError::PileBusyOrReserved, "Pile was occupied concurrently");
+        }
+
+        // 广播桩状态变更为 RESERVED (code: 8)
+        int64_t now = current_time_ms();
+        WsManager::instance().broadcast_pile_status(PileStatusChangedBroadcastFrame{
+            .event = "PILE_STATUS_CHANGED",
+            .station_id = st_id,
+            .pile_id = reserve_req.pile_id,
+            .old_status = "IDLE",
+            .new_status = "RESERVED",
+            .new_status_code = 8,
+            .timestamp = now
+        });
+
+        return make_success_response(*res);
+    }
+
+    static http::response<http::string_body> handle_cancel_reservation(
+        int64_t user_id,
+        const http::request<http::string_body>& req
+    ) {
+        CancelReservationRequest cancel_req;
+        if (!req.body().empty()) {
+            glz::read_json(cancel_req, req.body());
+        }
+
+        auto res = DbRepository::instance().cancel_reservation(user_id, cancel_req.reservation_id);
+        if (!res) {
+            return make_error_response(res.error());
+        }
+
+        // 内存状态池释放该桩为 IDLE
+        ChargingStatePool::instance().release_reserved_pile(res->pile_id);
+
+        int64_t st_id = 0;
+        auto p_pool = ChargingStatePool::instance().get_pile_state(res->pile_id);
+        if (p_pool) {
+            st_id = p_pool->station_id;
+        }
+
+        // 广播桩状态变更为 IDLE
+        int64_t now = current_time_ms();
+        WsManager::instance().broadcast_pile_status(PileStatusChangedBroadcastFrame{
+            .event = "PILE_STATUS_CHANGED",
+            .station_id = st_id,
+            .pile_id = res->pile_id,
+            .old_status = "RESERVED",
+            .new_status = "IDLE",
+            .new_status_code = 1,
+            .timestamp = now
+        });
+
+        return make_success_response(*res);
+    }
+
+    static http::response<http::string_body> handle_get_active_reservation(int64_t user_id) {
+        auto res = DbRepository::instance().get_active_reservation_by_user(user_id);
+        if (!res) {
+            return make_error_response(res.error());
+        }
+
+        ActiveReservationCheckResponseData data;
+        if (res->has_value()) {
+            const auto& r = res->value();
+            int64_t now = current_time_ms();
+            int64_t remain_s = (r.expire_at > now) ? (r.expire_at - now) / 1000 : 0;
+
+            std::string st_name;
+            const StaticStation* static_st = find_static_station(static_cast<int32_t>(r.station_id));
+            if (static_st) {
+                st_name = static_st->name;
+            } else {
+                auto st_res = DbRepository::instance().get_station_by_id(r.station_id);
+                if (st_res) st_name = st_res->station_name;
+            }
+
+            std::string p_name = r.pile_id;
+            std::string p_type = "FAST";
+            auto p_pool = ChargingStatePool::instance().get_pile_state(r.pile_id);
+            if (p_pool) {
+                p_name = p_pool->pile_name;
+                p_type = p_pool->type;
+            }
+
+            data.has_active_reservation = true;
+            data.active_reservation = ActiveReservationDTO{
+                .reservation_id = r.reservation_id,
+                .user_id = r.user_id,
+                .station_id = r.station_id,
+                .station_name = st_name,
+                .pile_id = r.pile_id,
+                .pile_name = p_name,
+                .pile_type = p_type,
+                .deposit = cents_to_yuan(r.deposit_cents),
+                .deposit_cents = r.deposit_cents,
+                .status = r.status,
+                .created_at = r.created_at,
+                .expire_at = r.expire_at,
+                .remaining_seconds = static_cast<int>(remain_s)
+            };
+        } else {
+            data.has_active_reservation = false;
         }
 
         return make_success_response(data);
