@@ -38,6 +38,14 @@ add_executable(ChargingPileAdmin
     src/dashboardmodel.h
     src/logindialog.cpp
     src/logindialog.h
+    src/models/pilestatusmodel.cpp
+    src/models/pilestatusmodel.h
+    src/models/usermanagementmodel.cpp
+    src/models/usermanagementmodel.h
+    src/widgets/pilestatuswidget.cpp
+    src/widgets/pilestatuswidget.h
+    src/widgets/usermanagementwidget.cpp
+    src/widgets/usermanagementwidget.h
     resources/resources.qrc
 )
 
@@ -46,6 +54,8 @@ add_executable(ChargingPileAdmin
 # 生成的 ui_mainwindow.h 会 #include "dashboardwidget.h"，需要能定位到它。
 target_include_directories(ChargingPileAdmin PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/models
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/widgets
 )
 
 # 链接 Qt6 模块
