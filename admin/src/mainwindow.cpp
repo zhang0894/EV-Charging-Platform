@@ -2,6 +2,7 @@
 #include "dashboardwidget.h"
 #include "dashboardmodel.h"
 #include "pilestatuswidget.h"
+#include "stationmanagementwidget.h"
 #include "usermanagementwidget.h"
 #include "ui_mainwindow.h"
 
@@ -13,7 +14,7 @@ MainWindow::MainWindow(const QString &authToken, QWidget *parent)
     , m_menuGroup(new QButtonGroup(this))
 {
     ui->setupUi(this);
-
+//   qDebug() << "=== Token: " << authToken;  显示token调试专用
     // 设置窗口图标与默认尺寸
     setWindowIcon(QIcon(QStringLiteral(":/img/app-logo.svg")));
     resize(1280, 800);
@@ -52,6 +53,17 @@ MainWindow::MainWindow(const QString &authToken, QWidget *parent)
 
     // 将管理员 Token 传递给 PileStatusModel（首次拉取由页面 showEvent 触发）
     pileStatusPage->setAuthToken(authToken);
+
+    // 充电站管理页（索引 3）：用 StationManagementWidget 替换占位页，
+    // 菜单按钮 btnStationManage(id=3) 与页面索引的映射关系保持不变。
+    StationManagementWidget *stationPage = new StationManagementWidget(this);
+    QWidget *oldStationPage = ui->contentStack->widget(3);
+    ui->contentStack->removeWidget(oldStationPage);
+    ui->contentStack->insertWidget(3, stationPage);
+    delete oldStationPage;
+
+    // 将管理员 Token 传递给 StationManagementModel（内部随即拉取第 1 页充电站列表）
+    stationPage->setAuthToken(authToken);
 
     // 用户管理页（索引 4）：用 UserManagementWidget 替换占位页，
     // 菜单按钮 btnUserManage(id=4) 与页面索引的映射关系保持不变。
