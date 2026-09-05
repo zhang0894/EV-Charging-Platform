@@ -44,6 +44,12 @@ public:
         global_subs_.push_back(session);
     }
 
+    bool has_charging_subscribers(const std::string& order_id) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = charging_subs_.find(order_id);
+        return it != charging_subs_.end() && !it->second.empty();
+    }
+
     // 广播充电遥测
     void broadcast_telemetry(const TelemetryFrame& frame) {
         std::string json_str;

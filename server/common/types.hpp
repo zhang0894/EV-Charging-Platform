@@ -15,7 +15,8 @@ enum class PileStatus : uint8_t {
     FINISHING = 4,    // 充电完成 / 待结算拔枪
     FAULT = 5,        // 设备故障
     MAINTENANCE = 6,  // 维护锁定中
-    OFFLINE = 7       // 设备离线
+    OFFLINE = 7,      // 设备离线
+    RESERVED = 8      // 已预约锁定
 };
 
 inline std::string_view to_string(PileStatus status) {
@@ -27,6 +28,7 @@ inline std::string_view to_string(PileStatus status) {
         case PileStatus::FAULT: return "FAULT";
         case PileStatus::MAINTENANCE: return "MAINTENANCE";
         case PileStatus::OFFLINE: return "OFFLINE";
+        case PileStatus::RESERVED: return "RESERVED";
     }
     return "UNKNOWN";
 }
@@ -67,10 +69,12 @@ inline std::string_view to_string(OrderStatus status) {
 
 // 资金流水类型
 enum class FlowType : uint8_t {
-    RECHARGE = 1,         // 钱包充值
-    CHARGE_DEDUCTION = 2, // 充电扣费
-    REFUND = 3,           // 充电退补 / 退款
-    ADMIN_ADJUST = 4      // 管理员调账补偿
+    RECHARGE = 1,            // 钱包充值
+    CHARGE_DEDUCTION = 2,    // 充电扣费
+    REFUND = 3,              // 充电退补 / 退款
+    ADMIN_ADJUST = 4,        // 管理员调账补偿
+    RESERVATION_DEPOSIT = 5, // 预约押金扣除
+    RESERVATION_REFUND = 6   // 预约押金退还
 };
 
 inline std::string_view to_string(FlowType type) {
@@ -79,6 +83,26 @@ inline std::string_view to_string(FlowType type) {
         case FlowType::CHARGE_DEDUCTION: return "CHARGE_DEDUCTION";
         case FlowType::REFUND: return "REFUND";
         case FlowType::ADMIN_ADJUST: return "ADMIN_ADJUST";
+        case FlowType::RESERVATION_DEPOSIT: return "RESERVATION_DEPOSIT";
+        case FlowType::RESERVATION_REFUND: return "RESERVATION_REFUND";
+    }
+    return "UNKNOWN";
+}
+
+// 预约状态
+enum class ReservationStatus : uint8_t {
+    ACTIVE = 1,    // 预约生效中
+    FULFILLED = 2, // 已履约到场开枪
+    CANCELLED = 3, // 用户主动取消
+    TIMEOUT = 4    // 超时自动释放
+};
+
+inline std::string_view to_string(ReservationStatus status) {
+    switch (status) {
+        case ReservationStatus::ACTIVE: return "ACTIVE";
+        case ReservationStatus::FULFILLED: return "FULFILLED";
+        case ReservationStatus::CANCELLED: return "CANCELLED";
+        case ReservationStatus::TIMEOUT: return "TIMEOUT";
     }
     return "UNKNOWN";
 }

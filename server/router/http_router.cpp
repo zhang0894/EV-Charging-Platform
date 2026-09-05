@@ -112,6 +112,21 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
     if (path == "/api/v1/auth/refresh" && method == http::verb::post) {
         return AuthController::handle_refresh_token(req);
     }
+    if (path == "/api/v1/auth/check-phone") {
+        if (method == http::verb::get) {
+            std::string phone = query.contains("phone") ? query["phone"] : "";
+            return AuthController::handle_check_phone(phone);
+        } else if (method == http::verb::post) {
+            std::string phone;
+            CheckPhoneRequest check_req;
+            if (glz::read_json(check_req, req.body()) == glz::error_code::none) {
+                phone = check_req.phone;
+            } else if (query.contains("phone")) {
+                phone = query["phone"];
+            }
+            return AuthController::handle_check_phone(phone);
+        }
+    }
 
     // ==========================================
     // 2. 充电站附近与详情接口 (公开或带鉴权)
@@ -190,6 +205,17 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
         }
         if (path == "/api/v1/charging/settle" && method == http::verb::post) {
             return ChargingController::handle_settle_order(uid, req);
+        }
+
+        // 充电桩预约与取消
+        if ((path == "/api/v1/charging/reserve" || path == "/api/v1/charging/reservation") && method == http::verb::post) {
+            return ChargingController::handle_reserve_pile(uid, req);
+        }
+        if ((path == "/api/v1/charging/cancel-reservation" || path == "/api/v1/charging/reservation/cancel") && method == http::verb::post) {
+            return ChargingController::handle_cancel_reservation(uid, req);
+        }
+        if ((path == "/api/v1/charging/active-reservation" || path == "/api/v1/charging/reservation/active") && method == http::verb::get) {
+            return ChargingController::handle_get_active_reservation(uid);
         }
 
         // 用户订单列表

@@ -315,6 +315,7 @@ public:
             else if (p.status == "FAULT") { st_code = 5; st_desc = "设备故障"; }
             else if (p.status == "MAINTENANCE") { st_code = 6; st_desc = "锁定维护中"; }
             else if (p.status == "OFFLINE") { st_code = 7; st_desc = "离线"; }
+            else if (p.status == "RESERVED") { st_code = 8; st_desc = "已预约锁定"; }
 
             data.piles.push_back(PileDetailDTO{
                 .pile_id = p.pile_id,
