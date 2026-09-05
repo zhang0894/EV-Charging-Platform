@@ -10,7 +10,7 @@
     "maintainer": "EV-Charging-Platform Engineering Team",
     "environment_details": {
       "os_windows": "Windows 10 / 11 64-bit",
-      "os_linux": "Ubuntu 22.04 / 24.04 LTS",
+      "os_linux": "Ubuntu 24.04 LTS",
       "cmake_version": "4.3.3",
       "ninja_version": "1.13.2",
       "cpp_standard": "C++23",
@@ -22,7 +22,7 @@
       },
       "compiler_linux": {
         "name": "GCC (GNU Compiler Collection)",
-        "version": "13.x / 14.x",
+        "version": "16.0.1",
         "c_compiler": "gcc",
         "cxx_compiler": "g++"
       },
