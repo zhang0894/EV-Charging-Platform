@@ -9,6 +9,8 @@ server/cmake-build-*/
 server/cmake-build-debug
 server/build_bench
 server/build_standard
+server/data/seed_*.json
+server/data/stations_processed.json
 progress-governor
 项目说明书.doc
 venv/

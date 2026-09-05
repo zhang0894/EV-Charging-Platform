@@ -5,9 +5,23 @@ import time
 import os
 import sys
 
+def get_data_dir():
+    # 动态定位 server/data 相对路径，确保在不同环境或部署路径下均可直接运行
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(script_dir, "..", "server", "data"),
+        os.path.join(script_dir, "server", "data"),
+        os.path.join(os.getcwd(), "server", "data"),
+        os.path.join(os.getcwd(), "data"),
+    ]
+    for cand in candidates:
+        cand_norm = os.path.normpath(cand)
+        if os.path.exists(os.path.join(cand_norm, "beijing_charging_stations.json")):
+            return cand_norm
+    return os.path.normpath(os.path.join(script_dir, "..", "server", "data"))
+
 def main():
-    base_dir = r"e:\EV-Charging-Platform"
-    data_dir = os.path.join(base_dir, "server", "data")
+    data_dir = get_data_dir()
     src_stations_file = os.path.join(data_dir, "beijing_charging_stations.json")
     
     out_stations_file = os.path.join(data_dir, "stations_processed.json")
