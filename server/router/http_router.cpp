@@ -229,7 +229,7 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
             int days = query.contains("days") ? std::stoi(query["days"]) : 7;
             return AdminController::handle_get_revenue_trend(days);
         }
-        if (path == "/api/v1/admin/dashboard/pile-status" && method == http::verb::get) {
+        if ((path == "/api/v1/admin/dashboard/pile-status" || path == "/api/v1/admin/dashboard/pile-status-overview") && method == http::verb::get) {
             return AdminController::handle_get_pile_status_overview();
         }
 
@@ -288,9 +288,9 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
             return AdminController::handle_restart_pile(pid, req);
         }
 
-        // 充电桩状态切换: /api/v1/admin/piles/{pile_id}/status
-        static const std::regex pile_status_regex(R"(^/api/v1/admin/piles/([^/]+)/status$)");
-        if (method == http::verb::put && std::regex_match(path_str.c_str(), match, pile_status_regex)) {
+        // 充电桩状态切换: POST /api/v1/admin/piles/{pile_id}/set-status 或 PUT /api/v1/admin/piles/{pile_id}/status
+        static const std::regex pile_status_regex(R"(^/api/v1/admin/piles/([^/]+)/(status|set-status)$)");
+        if ((method == http::verb::put || method == http::verb::post) && std::regex_match(path_str.c_str(), match, pile_status_regex)) {
             std::string pid = match[1].str();
             return AdminController::handle_change_pile_status(pid, req);
         }
@@ -344,6 +344,13 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
         if (method == http::verb::post && std::regex_match(path_str.c_str(), match, order_refund_regex)) {
             std::string oid = match[1].str();
             return AdminController::handle_refund_order(oid, admin_uid, req);
+        }
+
+        // 管理员查询特定订单详情 / 审计详情: /api/v1/admin/orders/{order_id}
+        static const std::regex admin_order_detail_regex(R"(^/api/v1/admin/orders/([^/]+)$)");
+        if (method == http::verb::get && std::regex_match(path_str.c_str(), match, admin_order_detail_regex)) {
+            std::string oid = match[1].str();
+            return ChargingController::handle_get_order_detail(0, oid);
         }
     }
 

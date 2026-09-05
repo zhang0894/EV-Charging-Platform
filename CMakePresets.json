@@ -1,0 +1,144 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
+  "vendor": {
+    "description": "EV-Charging-Platform Local Toolchain & Environment Specifications",
+    "maintainer": "EV-Charging-Platform Engineering Team",
+    "environment_details": {
+      "os_windows": "Windows 10 / 11 64-bit",
+      "os_linux": "Ubuntu 22.04 / 24.04 LTS",
+      "cmake_version": "4.3.3",
+      "ninja_version": "1.13.2",
+      "cpp_standard": "C++23",
+      "compiler_windows": {
+        "name": "MinGW-W64 GCC (Brecht Sanders UCRT)",
+        "version": "16.1.0",
+        "c_compiler": "C:/mingw64/bin/gcc.exe",
+        "cxx_compiler": "C:/mingw64/bin/g++.exe"
+      },
+      "compiler_linux": {
+        "name": "GCC (GNU Compiler Collection)",
+        "version": "13.x / 14.x",
+        "c_compiler": "gcc",
+        "cxx_compiler": "g++"
+      },
+      "python_runtime": {
+        "version": "3.12.10",
+        "windows_venv": "e:/EV-Charging-Platform/venv/Scripts/python.exe",
+        "linux_python": "python3"
+      },
+      "postgresql": {
+        "version": "18.6",
+        "windows_root": "C:/Program Files/PostgreSQL/18",
+        "windows_bin": "C:/Program Files/PostgreSQL/18/bin",
+        "windows_include": "C:/Program Files/PostgreSQL/18/include",
+        "superuser_name": "postgres",
+        "superuser_password": "Express1.",
+        "port": 5432,
+        "dbname": "postgres",
+        "default_conninfo": "host=127.0.0.1 port=5432 dbname=postgres user=postgres password=Express1. sslmode=disable connect_timeout=5"
+      },
+      "third_party_libraries": {
+        "boost": {
+          "version": "1.92.0",
+          "type": "Header-only (Asio, Beast, Geometry R-Tree)",
+          "path": "${sourceDir}/boost_1_92_0"
+        },
+        "glaze": {
+          "version": "8.3.0",
+          "type": "Header-only (Compile-time JSON Reflection & Serialization)",
+          "path": "${sourceDir}/glaze-8.3.0/include"
+        }
+      }
+    }
+  },
+  "configurePresets": [
+    {
+      "name": "windows-mingw-default",
+      "displayName": "Windows MinGW-W64 GCC 16.1 + Ninja (Default Server)",
+      "description": "本地 Windows 默认环境配置：使用 MinGW-W64 GCC 16.1.0 编译，连接本地 PostgreSQL 18.6 (密码: Express1.)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/server/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "C:/mingw64/bin/gcc.exe",
+        "CMAKE_CXX_COMPILER": "C:/mingw64/bin/g++.exe",
+        "CMAKE_MAKE_PROGRAM": "ninja",
+        "PG_WIN_ROOT": "C:/Program Files/PostgreSQL/18",
+        "ENABLE_BENCHMARK": "OFF"
+      },
+      "environment": {
+        "PATH": "C:/mingw64/bin;C:/Program Files/PostgreSQL/18/bin;$penv{PATH}",
+        "PG_CONNINFO": "host=127.0.0.1 port=5432 dbname=postgres user=postgres password=Express1. sslmode=disable connect_timeout=5",
+        "NO_PROMPT": "1"
+      }
+    },
+    {
+      "name": "windows-mingw-bench",
+      "displayName": "Windows MinGW-W64 GCC 16.1 + Ninja (Benchmark & 100k Seed Mode)",
+      "description": "本地 Windows 压测构建：启用 ENABLE_BENCHMARK=ON 并编译 stress_client 客户端",
+      "inherits": "windows-mingw-default",
+      "binaryDir": "${sourceDir}/server/build_bench",
+      "cacheVariables": {
+        "ENABLE_BENCHMARK": "ON"
+      }
+    },
+    {
+      "name": "linux-default",
+      "displayName": "Linux GCC + Ninja (Default Server)",
+      "description": "远程 Linux Ubuntu 服务器默认配置：自动检测系统 PostgreSQL 18/16 依赖",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/server/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "ENABLE_BENCHMARK": "OFF"
+      },
+      "environment": {
+        "PG_CONNINFO": "host=127.0.0.1 port=5432 dbname=postgres user=postgres password=Express1. sslmode=disable connect_timeout=5",
+        "NO_PROMPT": "1"
+      }
+    },
+    {
+      "name": "linux-bench",
+      "displayName": "Linux GCC + Ninja (Benchmark Mode)",
+      "description": "远程 Linux 压测构建配置：包含 stress_client 与大规模数据模式",
+      "inherits": "linux-default",
+      "binaryDir": "${sourceDir}/server/build_bench",
+      "cacheVariables": {
+        "ENABLE_BENCHMARK": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-server",
+      "displayName": "Build Server (Windows)",
+      "configurePreset": "windows-mingw-default",
+      "targets": ["server"]
+    },
+    {
+      "name": "windows-bench",
+      "displayName": "Build Benchmark & Server (Windows)",
+      "configurePreset": "windows-mingw-bench",
+      "targets": ["server", "stress_client"]
+    },
+    {
+      "name": "linux-server",
+      "displayName": "Build Server (Linux)",
+      "configurePreset": "linux-default",
+      "targets": ["server"]
+    },
+    {
+      "name": "linux-bench",
+      "displayName": "Build Benchmark & Server (Linux)",
+      "configurePreset": "linux-bench",
+      "targets": ["server", "stress_client"]
+    }
+  ]
+}

@@ -1,43 +1,64 @@
 # EV-Charging-Platform
 北理工大三小学期｜东软电动汽车充电桩应用管理平台｜基于 Linux + Qt(C++) 的电动汽车充电桩管理平台，含用户端、管理后台、数据库存储、Web数据大屏与机器学习负荷预测
 
-## 项目结构 (服务端 Server)
+## 项目结构介绍 (Server 服务端 & Data Generator 数据管线)
+
+### 1. 数据预处理与生成管线 (`data_generator/`)
+`data_generator/` 负责离线处理高德地图采集的真实电站数据、行政区规范化映射以及全系统初始数据资产的自动化合成生成。
+```
+data_generator/
+└── prepare_data.py                     # 核心离线数据预处理与生成脚本：读取高德北京充电站源数据清洗并重排 station_id，自动按真实比例为每座电站生成 5~30 根电桩、生成初始化用户群与模拟历史充电订单，产出 stations_processed.json、seed_piles.json、seed_users.json、seed_orders.json，全部支持相对路径并兼容跨平台跨环境运行
+```
+
+### 2. 高性能服务端架构 (`server/`)
+服务端采用 C++23 标准开发，基于 Boost.Asio 协程与单线程/多线程无锁状态池，实现极致并发吞吐与内存零拷贝。
 ```
 server/
-├── CMakeLists.txt                      # 构建脚本 (跨平台兼容 Windows MSYS2/MinGW64 与 Linux GCC/Clang，C++23)
-├── main.cpp                            # 服务端主入口程序 (多线程 Asio 协程事件循环、启动交互提示、组件生命周期管理、优雅退出)
-├── cache/                              # 外部高速缓存组件
-│   └── redis_cache.hpp / .cpp          # 基于 hiredis 的 Redis 实时/TTL 缓存组件，支持热点只读微缓存 (Write-Invalidated Cache)
-├── common/                             # 领域实体模型与公共组件
-│   ├── types.hpp                       # 全局枚举 (PileStatus, OrderStatus, FlowType, Role) 与分/元金额转换
-│   ├── error.hpp                       # std::expected 错误模型、10001~50006 业务错误码与 HTTP 状态码映射
-│   ├── models.hpp                      # 领域实体模型与全部接口请求/响应 DTO (Glaze 编译期反射序列化)
-│   ├── auth_token.hpp                  # Bearer Token 签名生成与基于 std::string_view 的零拷贝鉴权校验器
-│   └── response.hpp                    # 统一 HTTP JSON 响应组装封装
-├── db/                                 # PostgreSQL 18 数据存储与访问持久层
+├── CMakeLists.txt                      # 跨平台构建脚本 (适配 Windows MinGW-W64 GCC 与 Linux GCC/Clang，C++23)
+├── main.cpp                            # 服务端主入口程序 (多线程 Asio 协程事件循环、启动参数与 NO_PROMPT 自动化、组件生命周期管理、优雅退出)
+├── benchmark/                          # 压测工具集 (编译期控制 ENABLE_BENCHMARK)
+│   └── stress_client.cpp               # 基于 Boost.Asio 协程的高并发真实压测客户端，支持多维度阶梯发包与延迟分布统计
+├── cache/                              # 外部与进程内高速缓存
+│   ├── redis_cache.hpp                 # 集中缓存接口定义 (支持 TTL、Write-Invalidated 缓存与离线热降级)
+│   └── redis_cache.cpp                 # 基于原生 Socket/hiredis 协议的异步/同步缓存实现，当 Redis 离线时无缝切换为进程内高并发读写锁内存缓存
+├── common/                             # 领域实体模型与公共工具组件
+│   ├── types.hpp                       # 全局枚举 (PileStatus, OrderStatus, FlowType, Role) 与分/元金额精准转换工具
+│   ├── error.hpp                       # std::expected 错误模型、10001~50006 业务错误码与 HTTP 状态码映射表
+│   ├── models.hpp                      # 全量领域模型实体与全部接口请求/响应 DTO (基于 Glaze 编译期反射序列化，零拷贝反序列化)
+│   ├── auth_token.hpp                  # Bearer Token 签名生成与基于 std::string_view 的无堆分配鉴权校验器
+│   └── response.hpp                    # 统一 HTTP JSON 响应组装封装 (包括 make_success_response 与 make_error_response)
+├── controllers/                        # 业务控制器层 (纯业务逻辑与无状态处理)
+│   ├── auth_controller.hpp             # 认证控制器：手机号免密登录(未注册返回10001)、账号密码注册(自动登录/手机号唯一校验)、手机号密码登录、修改密码、管理员登录、Token刷新
+│   ├── user_controller.hpp             # 用户控制器：个人中心资料查询与修改、修改密码、钱包资产查询、幂等充值、资金变动流水明细
+│   ├── station_controller.hpp          # 电站控制器：基于 R-Tree 内存常量快速粗筛附近电站、行政区检索、电站与实时枪位详情、单站销售业绩多维统计
+│   ├── charging_controller.hpp         # 充电核心控制器：充电前校验、启动充电、主动停止、行级排他锁资金结算、用户历史订单分页、订单详情
+│   └── admin_controller.hpp            # 管理员控制器：运营态势大盘看板、营收趋势、电站上线/下线与订单同步结算、电桩 CRUD、远程重启/维护指令、用户风控/调账、全局订单审计、一键退款
+├── data/                               # 真实北京充电站与初始业务数据资产
+│   ├── beijing_charging_stations.json  # 高德 API 采集的全北京市 8,569 座真实充电站原始数据
+│   ├── stations_processed.json         # 经过 prepare_data.py 清洗与行政区(0~15)紧凑编码后的标准化电站 JSON
+│   ├── static_stations.hpp             # 编译期常量装载头文件：通过 C++23 std::embed 机制将 stations_processed.json 零运行时开销映射为静态常量数组，提供 O(1) 站点快速检索与不可变保护
+│   ├── seed_piles.json                 # 全量充电桩初始化数据 (按真实电站随机分布 5~30 根)
+│   ├── seed_users.json                 # 初始用户群体与钱包资产数据
+│   └── seed_orders.json                # 历史充电订单与退款审计数据
+├── db/                                 # PostgreSQL 18 数据存储与持久层
 │   ├── schema.sql                      # DDL 建表脚本 (用户表、钱包表、流水表、电站表、电桩表、订单表)
-│   ├── db_pool.hpp / .cpp              # 基于 libpq 的动态扩容非阻塞连接池 (支持预编译语句 Prepared Statements 与事务隔离)
-│   ├── db_repository.hpp / .cpp        # 业务仓储层 (预编译查询、热点微缓存、行级锁资金扣划、幂等入账、退款审计)
-│   ├── async_flow_persister.hpp        # 环形双缓冲异步批量流水持久化引擎 (Batch Flush，高频流水与主业务解耦)
-│   └── seed_data.hpp / .cpp            # 超大规模测试数据预置器 (10,000 北京充电站、100,000 充电桩、超大规模数据) 与一键清空
-├── memory/                             # 内存状态池与空间索引 (L1 级存储)
-│   ├── rtree_index.hpp                 # Boost.Geometry R-Tree 2D 空间几何索引与站点元数据常驻内存表 (搜桩 0 次查库)
-│   └── state_pool.hpp                  # 高频电桩遥测与状态缓存池 (双缓冲读写保护与活跃电桩增量索引)
-├── simulation/                         # 真实充电桩动态模拟引擎
-│   └── simulator.hpp / .cpp            # Asio 定时器驱动的高频充电推演引擎 (基于活跃桩增量模拟 CC-CV 曲线与阶梯超时占位费)
-├── websocket/                          # 实时长连接与高频流分发
-│   ├── ws_session.hpp / .cpp           # Boost.Beast C++20 协程 WebSocket 会话管理
-│   └── ws_manager.hpp                  # 充电遥测流、导航监控流、全局告警广播流 Pub/Sub 管理器
-├── server/                             # 网络协议会话层
-│   └── http_session.hpp                # Boost.Beast HTTP/1.1 会话协程处理器 (基于 Session Strand 严格串行防竞争)
-├── controllers/                        # 业务控制器
-│   ├── auth_controller.hpp             # 手机号免密登录(未注册返回10001)、账号密码注册(自动登录/手机号唯一校验)、手机号密码登录、修改密码、管理员登录、Token刷新
-│   ├── user_controller.hpp             # 个人中心资料、修改密码、钱包资产查询、幂等充值、资金变动流水明细
-│   ├── station_controller.hpp          # 附近电站搜桩 (空间索引+内存零查库)、电站与枪位详情、单站销售业绩多维统计
-│   ├── charging_controller.hpp         # 充电前校验、启动充电、主动停止、行级排他锁资金结算、历史订单分页
-│   └── admin_controller.hpp            # 运营态势大盘、电站/电桩 CRUD、远程管控指令、用户风控/调账、一键退款
+│   ├── db_pool.hpp / .cpp              # 读写分离双池动态扩容连接池 (基于 libpq，主库写池+只读副本读池，支持预编译语句 Prepared Statements 与事务隔离)
+│   ├── db_repository.hpp / .cpp        # 业务仓储持久层 (预编译查询、热点微缓存、行级排他锁资金扣划、幂等入账、退款审计)
+│   ├── async_flow_persister.hpp        # 环形双缓冲异步批量流水持久化引擎 (Batch Flush，高频财务流水与主业务解耦)
+│   └── seed_data.hpp / .cpp            # 业务初始数据导入与检测器 (支持从 data/*.json 高效批量入库与一键清空重置)
+├── memory/                             # 进程内高性能内存池与空间几何索引 (L1 级存储)
+│   ├── rtree_index.hpp                 # Boost.Geometry R-Tree 2D 空间几何索引 (基于编译期常量建立，搜桩 0 次查库，自适应动态半径保证≥3座可用电站)
+│   ├── state_pool.hpp                  # 活跃电桩遥测状态池 (无锁读写保护与活跃电桩增量索引，支持微秒级状态感知)
+│   └── station_status_manager.hpp      # 电站上下线实时状态管理器 (内存位图与哈希表维护电站运营状态，下线时阻断新订单)
 ├── router/                             # 路由分发层
-│   └── http_router.hpp / .cpp          # 静态化正则预编译、Token 零拷贝解析与 RESTful 路由分发中心
+│   └── http_router.hpp / .cpp          # 静态化正则预编译、Token 零拷贝解析与 RESTful 全量路由分发中心
+├── server/                             # 网络协议会话层
+│   └── http_session.hpp                # Boost.Beast HTTP/1.1 会话协程处理器 (基于 Session Strand 严格串行防竞争，支持长连接 keep-alive)
+├── simulation/                         # 真实充电桩动态物理推演引擎
+│   └── simulator.hpp / .cpp            # Asio 定时器驱动的高频充电推演引擎 (基于活跃桩增量模拟 CC-CV 充电曲线与充满后超时占位阶梯计费)
+├── websocket/                          # 实时长连接与高频流分发
+│   ├── ws_manager.hpp                  # 充电遥测流、目标站点导航监控流、全局设备状态广播流 Pub/Sub 管理器
+│   └── ws_session.hpp / .cpp           # Boost.Beast C++20 协程 WebSocket 会话管理与心跳维护 (RFC 6455)
 └── tests/                              # 单元测试与端到端集成测试集
     ├── test_db_pool.cpp                # 数据库连接池、行锁扣款与业务仓储测试
     ├── test_rtree_and_sim.cpp          # R-Tree 空间检索与超时占位费阶梯计算测试

@@ -995,10 +995,13 @@ Result<void> DbRepository::create_pile(const CreatePileRequest& req) {
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int64_t now = current_time_ms();
+    double pwr = (req.max_power_kw > 0.0) ? req.max_power_kw : ((req.power_kw > 0.0) ? req.power_kw : 120.0);
+    std::string v_range = req.voltage_range.empty() ? "200V-750V" : req.voltage_range;
+
     std::string sql = std::format(
         "INSERT INTO piles (pile_id, station_id, pile_name, type, gun_type, max_power_kw, voltage_range, status, total_charge_count, total_charge_hours, last_heartbeat_at, created_at, updated_at) "
-        "VALUES ('{}', {}, '{}', '{}', '{}', {}, '200V-750V', 'IDLE', 0, 0.0, {}, {}, {});",
-        req.pile_id, req.station_id, req.pile_name, req.type, req.gun_type, req.power_kw, now, now, now
+        "VALUES ('{}', {}, '{}', '{}', '{}', {}, '{}', 'IDLE', 0, 0.0, {}, {}, {});",
+        req.pile_id, req.station_id, req.pile_name, req.type, req.gun_type, pwr, v_range, now, now, now
     );
 
     PgResultGuard res(conn->exec(sql.c_str()));

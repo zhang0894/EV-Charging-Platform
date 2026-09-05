@@ -146,6 +146,7 @@ struct RefreshTokenRequest {
 
 struct UpdateProfileRequest {
     std::string nickname;
+    std::string avatar_url;
 };
 
 struct UploadAvatarRequest {
@@ -322,6 +323,7 @@ struct StartChargingRequest {
     std::string strategy_type{"FULL"};
     double strategy_value{0.0};
     double pre_freeze_amount{50.0};
+    int64_t station_id{0};
 };
 
 struct StartChargingResponseData {
@@ -361,6 +363,7 @@ struct StopChargingResponseData {
 
 struct SettleOrderRequest {
     std::string order_id;
+    std::string idempotent_key;
 };
 
 struct SettleOrderResponseData {
@@ -576,7 +579,9 @@ struct CreatePileRequest {
     std::string pile_name;
     std::string type{"FAST"};
     double power_kw{120.0};
+    double max_power_kw{120.0};
     std::string gun_type{"国标2015"};
+    std::string voltage_range{"200V-750V"};
 };
 
 struct PileRestartRequest {
