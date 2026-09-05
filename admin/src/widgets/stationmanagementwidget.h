@@ -17,6 +17,7 @@ class QComboBox;
 class QPushButton;
 class QLabel;
 class StationManagementModel;
+class PileManagementModel;
 
 /**
  * @brief 充电站管理页（PC 运营后台）
@@ -59,6 +60,7 @@ private slots:
     void onAddStationClicked();        // 新增模拟电站弹窗
     void onStationsReady(const QJsonArray &stations, int total, int page, int pageSize);
     void onSalesDataReady(const QJsonObject &data, int stationId);
+    void onStationPilesReady(const QJsonArray &piles); // 详情弹窗"电桩列表"Tab 数据就绪
     void onOperationSuccess(const QString &msg);
     void onErrorOccurred(const QString &errorMsg);
 
@@ -72,8 +74,10 @@ private:
     void showSalesDetail(int stationId, const QString &stationName); // 销售详情对话框
     void requestSalesRange(const QString &timeRange); // 请求指定时间维度销售数据
     void fillSalesTable(QTableWidget *table, const QJsonObject &data); // 填充销售表格
+    void fillPileListTable(const QJsonArray &piles); // 填充"电桩列表"Tab 表格
 
     StationManagementModel *m_model;   // 数据源（唯一数据入口）
+    PileManagementModel *m_pileListModel = nullptr; // 详情弹窗"电桩列表"Tab 的数据源（独立实例）
 
     // 顶部工具栏
     QLineEdit   *m_searchEdit = nullptr;
@@ -94,6 +98,8 @@ private:
     QTableWidget *m_todayTable = nullptr;
     QTableWidget *m_weekTable = nullptr;
     QTableWidget *m_monthTable = nullptr;
+    QTableWidget *m_pileListTable = nullptr; // "电桩列表"Tab 表格（只读）
+    bool m_pileListLoaded = false;           // 当前电站的电桩列表是否已加载（首次切换时加载）
     int m_detailStationId = 0;          // 当前详情弹窗对应的电站 ID
     QString m_pendingSalesRange;        // 在途销售请求对应的 time_range
     QSet<QString> m_salesLoaded;        // 当前电站已加载的 time_range 集合

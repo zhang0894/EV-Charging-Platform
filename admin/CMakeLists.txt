@@ -40,12 +40,16 @@ add_executable(ChargingPileAdmin
     src/logindialog.h
     src/models/pilestatusmodel.cpp
     src/models/pilestatusmodel.h
+    src/models/pilemanagementmodel.cpp
+    src/models/pilemanagementmodel.h
     src/models/stationmanagementmodel.cpp
     src/models/stationmanagementmodel.h
     src/models/usermanagementmodel.cpp
     src/models/usermanagementmodel.h
     src/widgets/pilestatuswidget.cpp
     src/widgets/pilestatuswidget.h
+    src/widgets/pilemanagementwidget.cpp
+    src/widgets/pilemanagementwidget.h
     src/widgets/stationmanagementwidget.cpp
     src/widgets/stationmanagementwidget.h
     src/widgets/usermanagementwidget.cpp

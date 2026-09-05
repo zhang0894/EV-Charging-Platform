@@ -2,6 +2,7 @@
 #include "dashboardwidget.h"
 #include "dashboardmodel.h"
 #include "pilestatuswidget.h"
+#include "pilemanagementwidget.h"
 #include "stationmanagementwidget.h"
 #include "usermanagementwidget.h"
 #include "ui_mainwindow.h"
@@ -53,6 +54,17 @@ MainWindow::MainWindow(const QString &authToken, QWidget *parent)
 
     // 将管理员 Token 传递给 PileStatusModel（首次拉取由页面 showEvent 触发）
     pileStatusPage->setAuthToken(authToken);
+
+    // 充电桩管理页（索引 2）：用 PileManagementWidget 替换占位页，
+    // 菜单按钮 btnPileManage(id=2) 与页面索引的映射关系保持不变。
+    PileManagementWidget *pilePage = new PileManagementWidget(this);
+    QWidget *oldPilePage = ui->contentStack->widget(2);
+    ui->contentStack->removeWidget(oldPilePage);
+    ui->contentStack->insertWidget(2, pilePage);
+    delete oldPilePage;
+
+    // 将管理员 Token 传递给 PileManagementModel（内部随即拉取第 1 页充电桩列表）
+    pilePage->setAuthToken(authToken);
 
     // 充电站管理页（索引 3）：用 StationManagementWidget 替换占位页，
     // 菜单按钮 btnStationManage(id=3) 与页面索引的映射关系保持不变。

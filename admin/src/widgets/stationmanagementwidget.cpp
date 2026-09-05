@@ -1,5 +1,6 @@
 #include "stationmanagementwidget.h"
 #include "stationmanagementmodel.h"
+#include "pilemanagementmodel.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -37,6 +38,7 @@ static const QString kOfflineBtnStyle = QStringLiteral(
 StationManagementWidget::StationManagementWidget(QWidget *parent)
     : QWidget(parent)
     , m_model(new StationManagementModel(this))
+    , m_pileListModel(new PileManagementModel(this))
 {
     buildUi();
 
@@ -48,6 +50,12 @@ StationManagementWidget::StationManagementWidget(QWidget *parent)
     connect(m_model, &StationManagementModel::operationSuccess,
             this, &StationManagementWidget::onOperationSuccess);
     connect(m_model, &StationManagementModel::errorOccurred,
+            this, &StationManagementWidget::onErrorOccurred);
+
+    // 详情弹窗"电桩列表"Tab 的数据源（复用 PileManagementModel，传 station_id 拉取）
+    connect(m_pileListModel, &PileManagementModel::pilesReady,
+            this, &StationManagementWidget::onStationPilesReady);
+    connect(m_pileListModel, &PileManagementModel::errorOccurred,
             this, &StationManagementWidget::onErrorOccurred);
 
     // 工具栏交互
@@ -66,6 +74,8 @@ StationManagementWidget::StationManagementWidget(QWidget *parent)
 void StationManagementWidget::setAuthToken(const QString &token)
 {
     m_model->setAuthToken(token);
+    // 详情弹窗"电桩列表"Tab 复用 PileManagementModel，同样需要 Token
+    m_pileListModel->setAuthToken(token);
     // 登录成功后首次拉取第 1 页（默认条件：无站名筛选 / 全部状态）
     applyFiltersAndFetch(1);
 }
@@ -483,13 +493,31 @@ void StationManagementWidget::showSalesDetail(int stationId, const QString &stat
     m_todayTable = new QTableWidget(m_detailTabs);
     m_weekTable  = new QTableWidget(m_detailTabs);
     m_monthTable = new QTableWidget(m_detailTabs);
+    m_pileListTable = new QTableWidget(m_detailTabs);
     m_detailTabs->addTab(m_todayTable, tr("今日"));
     m_detailTabs->addTab(m_weekTable,  tr("近7天"));
     m_detailTabs->addTab(m_monthTable, tr("近30天"));
+    m_detailTabs->addTab(m_pileListTable, tr("电桩列表"));
     lay->addWidget(m_detailTabs, 1);
 
-    // 切换 Tab 时按需加载对应时间维度的数据（已加载则直接展示缓存内容）
+    // 点击"电桩列表"Tab 内任意行：提示前往"充电桩管理"模块（不关闭详情弹窗）
+    connect(m_pileListTable, &QTableWidget::cellClicked, dlg, [this](int, int) {
+        QMessageBox box(this);
+        box.setWindowTitle(tr("提示"));
+        box.setText(tr("该充电桩的详细信息请前往「充电桩管理」模块查看"));
+        box.addButton(tr("知道了"), QMessageBox::AcceptRole);
+        box.exec();
+    });
+
+    // 切换 Tab 时按需加载：前 3 个 Tab 加载对应时间维度销售数据，
+    // 第 4 个 Tab（电桩列表）首次切换时加载该站全部电桩
     connect(m_detailTabs, &QTabWidget::currentChanged, dlg, [this](int index) {
+        if (index == 3) { // "电桩列表" Tab
+            if (!m_pileListLoaded) {
+                m_pileListModel->fetchPiles(1, 100, m_detailStationId);
+            }
+            return;
+        }
         static const QStringList ranges = { QStringLiteral("today"),
                                             QStringLiteral("7d"),
                                             QStringLiteral("30d") };
@@ -509,6 +537,7 @@ void StationManagementWidget::showSalesDetail(int stationId, const QString &stat
     m_detailStationId = stationId;
     m_salesLoaded.clear();
     m_pendingSalesRange.clear();
+    m_pileListLoaded = false; // "电桩列表"Tab 需针对新电站重新加载
 
     // 弹窗关闭后自动销毁（QPointer 自动置空，后续回调安全跳过）
     connect(dlg, &QDialog::finished, dlg, &QObject::deleteLater);
@@ -609,4 +638,86 @@ void StationManagementWidget::fillSalesTable(QTableWidget *table, const QJsonObj
         table->setItem(static_cast<int>(i), 2, engItem);
         table->setItem(static_cast<int>(i), 3, ordItem);
     }
+}
+
+// ------------- 详情弹窗"电桩列表"Tab：数据就绪与填充 -------------
+void StationManagementWidget::onStationPilesReady(const QJsonArray &piles)
+{
+    // 弹窗已关闭：丢弃响应（电桩列表请求由详情弹窗发起，无需再校验电站 ID）
+    if (m_detailDialog.isNull()) {
+        return;
+    }
+    fillPileListTable(piles);
+}
+
+void StationManagementWidget::fillPileListTable(const QJsonArray &piles)
+{
+    // 6 列只读表格：桩编号 / 类型 / 功率(kW) / 状态 / 累计充电次数 / 累计充电时长
+    m_pileListTable->clear();
+    m_pileListTable->setColumnCount(6);
+    m_pileListTable->setHorizontalHeaderLabels({ tr("桩编号"), tr("类型"),
+                                                 tr("功率(kW)"), tr("状态"),
+                                                 tr("累计充电次数"), tr("累计充电时长") });
+    m_pileListTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_pileListTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_pileListTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_pileListTable->setAlternatingRowColors(true);
+    m_pileListTable->setWordWrap(false);
+    m_pileListTable->verticalHeader()->setVisible(false);
+    m_pileListTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+
+    if (piles.isEmpty()) {
+        // 无数据占位行
+        m_pileListTable->setRowCount(1);
+        m_pileListTable->setSpan(0, 0, 1, 6);
+        auto *placeholder = new QTableWidgetItem(tr("暂无电桩"));
+        placeholder->setTextAlignment(Qt::AlignCenter);
+        placeholder->setForeground(QColor(0x5a, 0x6b, 0x85));
+        m_pileListTable->setItem(0, 0, placeholder);
+        m_pileListLoaded = true;
+        return;
+    }
+
+    m_pileListTable->setRowCount(static_cast<int>(piles.size()));
+    for (qsizetype i = 0; i < piles.size(); ++i) {
+        const QJsonObject p = piles.at(i).toObject();
+        const int row = static_cast<int>(i);
+
+        const QString pileId = p.value(QStringLiteral("pile_id")).toString();
+        const QString type = p.value(QStringLiteral("type")).toString();
+        const double powerKw = p.value(QStringLiteral("power_kw")).toDouble();
+        const QString status = p.value(QStringLiteral("current_status")).toString();
+        const int chargeCount = p.value(QStringLiteral("total_charge_count")).toInt();
+        const double chargeHours = p.value(QStringLiteral("total_charge_hours")).toDouble();
+
+        // 桩编号
+        auto *idItem = new QTableWidgetItem(pileId);
+        idItem->setTextAlignment(Qt::AlignCenter);
+        // 类型（快充青 / 慢充灰）
+        auto *typeItem = new QTableWidgetItem(PileManagementModel::pileTypeText(type));
+        typeItem->setTextAlignment(Qt::AlignCenter);
+        typeItem->setForeground(PileManagementModel::pileTypeColor(type));
+        // 功率（保留 1 位小数）
+        auto *powerItem = new QTableWidgetItem(QString::number(powerKw, 'f', 1));
+        powerItem->setTextAlignment(Qt::AlignCenter);
+        // 状态（带颜色）
+        auto *stItem = new QTableWidgetItem(PileManagementModel::pileStatusText(status));
+        stItem->setTextAlignment(Qt::AlignCenter);
+        stItem->setForeground(PileManagementModel::pileStatusColor(status));
+        // 累计充电次数
+        auto *countItem = new QTableWidgetItem(QString::number(chargeCount));
+        countItem->setTextAlignment(Qt::AlignCenter);
+        // 累计充电时长（如 1240.5h）
+        auto *hoursItem = new QTableWidgetItem(
+            QStringLiteral("%1h").arg(QString::number(chargeHours, 'f', 1)));
+        hoursItem->setTextAlignment(Qt::AlignCenter);
+
+        m_pileListTable->setItem(row, 0, idItem);
+        m_pileListTable->setItem(row, 1, typeItem);
+        m_pileListTable->setItem(row, 2, powerItem);
+        m_pileListTable->setItem(row, 3, stItem);
+        m_pileListTable->setItem(row, 4, countItem);
+        m_pileListTable->setItem(row, 5, hoursItem);
+    }
+    m_pileListLoaded = true;
 }
