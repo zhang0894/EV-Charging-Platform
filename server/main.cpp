@@ -9,6 +9,7 @@
 #include "db/async_flow_persister.hpp"
 #include "data/static_stations.hpp"
 #include "memory/station_status_manager.hpp"
+#include "memory/station_price_manager.hpp"
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/signal_set.hpp>
@@ -96,6 +97,8 @@ int main(int argc, char* argv[]) {
     std::println(">>> 4. 正在装载北京市真实充电站编译期常量 (共 {} 座真实电站)...", ev::STATIC_STATION_COUNT);
     ev::StationRTree::instance().build_static_index();
     ev::StationStatusManager::instance().init();
+    ev::StationPriceManager::instance().init();
+    ev::StationPriceManager::instance().load_from_db();
     ev::ChargingStatePool::instance().init_from_seed_piles("data");
     std::println("  [OK] 成功构建 {} 个真实充电站 R-Tree 空间几何索引与 16 个行政区索引", ev::STATIC_STATION_COUNT);
     std::println("  [OK] 成功为全量充电站装载充电桩，状态池初始化就绪");

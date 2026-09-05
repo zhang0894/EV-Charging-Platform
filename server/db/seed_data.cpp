@@ -171,8 +171,9 @@ bool SeedDataGenerator::import_from_json(const std::string& data_dir) {
         for (size_t j = i; j < end_idx; ++j) {
             const auto& s = stations[j];
             if (j > i) sql += ", ";
-            sql += std::format("({}, '{}', '{}', {:.6f}, {:.6f}, '010-88889999', '00:00 - 24:00', 1.45, 0.35, 5.00, 15, 1, {}, {})",
-                               s.station_id, sql_escape(s.name), sql_escape(s.address), s.latitude, s.longitude, now - 864000000LL, now);
+            double st_price = 1.15 + static_cast<double>((static_cast<uint64_t>(s.station_id) * 104729ULL + 12345ULL) % 71) * 0.01;
+            sql += std::format("({}, '{}', '{}', {:.6f}, {:.6f}, '010-88889999', '00:00 - 24:00', {:.2f}, 0.35, 5.00, 15, 1, {}, {})",
+                               s.station_id, sql_escape(s.name), sql_escape(s.address), s.latitude, s.longitude, st_price, now - 864000000LL, now);
         }
         sql += " ON CONFLICT (station_id) DO NOTHING;";
 

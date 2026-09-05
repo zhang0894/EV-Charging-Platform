@@ -11,6 +11,7 @@
 #include "../cache/redis_cache.hpp"
 #include "../data/static_stations.hpp"
 #include "../memory/station_status_manager.hpp"
+#include "../memory/station_price_manager.hpp"
 #include <glaze/glaze.hpp>
 
 namespace ev {
@@ -140,7 +141,7 @@ public:
                     .online_piles = summary.total_piles - summary.fault_piles,
                     .idle_piles = summary.idle_piles,
                     .online_rate = std::round(online_rate * 10.0) / 10.0,
-                    .price_per_kwh = 1.45,
+                    .price_per_kwh = StationPriceManager::instance().get_price(sid),
                     .service_fee_per_kwh = 0.35,
                     .overtime_fee_per_15min = 5.00,
                     .status = is_on ? 1 : 2,

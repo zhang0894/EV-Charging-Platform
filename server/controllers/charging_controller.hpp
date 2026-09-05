@@ -9,6 +9,7 @@
 #include "../websocket/ws_manager.hpp"
 #include "../data/static_stations.hpp"
 #include "../memory/station_status_manager.hpp"
+#include "../memory/station_price_manager.hpp"
 #include <glaze/glaze.hpp>
 
 namespace ev {
@@ -107,7 +108,7 @@ public:
         }
 
         std::string st_name;
-        double price_per_kwh = 1.45;
+        double price_per_kwh = StationPriceManager::instance().get_price(st_id);
         double service_fee_per_kwh = 0.35;
         double overtime_fee_per_15min = 5.00;
         int overtime_grace_minutes = 15;

@@ -1,6 +1,7 @@
 #include "db_repository.hpp"
 #include "async_flow_persister.hpp"
 #include "../cache/redis_cache.hpp"
+#include "../memory/station_price_manager.hpp"
 #include <format>
 #include <iostream>
 #include <sstream>
@@ -731,6 +732,8 @@ Result<void> DbRepository::update_station(int64_t station_id, const UpdateStatio
 
     PgResultGuard res(conn->exec(sql.c_str()));
     if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
+
+    StationPriceManager::instance().set_price(station_id, req.price_per_kwh);
     return {};
 }
 

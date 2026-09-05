@@ -155,7 +155,9 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
 
     if (method == http::verb::get && std::regex_match(path_str.c_str(), match, station_detail_regex)) {
         int64_t sid = std::stoll(match[1].str());
-        return StationController::handle_get_station_detail(sid);
+        double lat = query.contains("latitude") ? std::stod(query["latitude"]) : 0.0;
+        double lng = query.contains("longitude") ? std::stod(query["longitude"]) : 0.0;
+        return StationController::handle_get_station_detail(sid, lat, lng);
     }
 
     // ==========================================

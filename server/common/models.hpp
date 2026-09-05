@@ -311,18 +311,29 @@ struct PileDetailDTO {
 
 struct StationDetailResponseData {
     int64_t station_id{0};
+    int64_t id{0}; // 紧凑整数唯一ID别名
     std::string station_name;
+    std::string district; // 北京市16个行政区真实名称 (如: "朝阳区")
+    uint8_t district_code{0}; // 0 ~ 15 编号
     std::string address;
     double latitude{0.0};
     double longitude{0.0};
-    std::string contact_phone;
-    std::string operating_hours{"00:00 - 24:00"};
+    double distance_km{0.0};
     double price_per_kwh{1.45};
     double service_fee_per_kwh{0.35};
     double overtime_fee_per_15min{5.00};
     int overtime_grace_minutes{15};
     int total_piles{0};
+    int pile_count{0}; // 充电桩总数别名
     int idle_piles{0};
+    int available_count{0}; // 可用充电桩数量别名
+    int fast_piles_idle{0};
+    int slow_piles_idle{0};
+    bool has_fast_pile{false}; // 是否拥有直流快充桩
+    int station_status{1}; // 1: 运营中/在线, 2: 维护/已下线
+    bool is_online{true};  // 在线状态标记
+    std::string contact_phone{"010-88889999"};
+    std::string operating_hours{"00:00 - 24:00"};
     std::vector<PileDetailDTO> piles;
 };
 

@@ -9,6 +9,7 @@
 #include "../db/db_repository.hpp"
 #include "../memory/rtree_index.hpp"
 #include "../memory/state_pool.hpp"
+#include "../memory/station_price_manager.hpp"
 #include "../cache/redis_cache.hpp"
 #include <cmath>
 #include <algorithm>
@@ -73,7 +74,7 @@ public:
                 .latitude = lat,
                 .longitude = lon,
                 .distance_km = std::round(item.distance_km * 100.0) / 100.0,
-                .price_per_kwh = 1.45,
+                .price_per_kwh = StationPriceManager::instance().get_price(item.station_id),
                 .service_fee_per_kwh = 0.35,
                 .overtime_fee_per_15min = 5.00,
                 .total_piles = summary.total_piles,
@@ -202,7 +203,7 @@ public:
                     .latitude = st->latitude,
                     .longitude = st->longitude,
                     .distance_km = std::round(item.distance_km * 100.0) / 100.0,
-                    .price_per_kwh = 1.45,
+                    .price_per_kwh = StationPriceManager::instance().get_price(st->station_id),
                     .service_fee_per_kwh = 0.35,
                     .overtime_fee_per_15min = 5.00,
                     .total_piles = summary.total_piles,
@@ -221,12 +222,17 @@ public:
         return make_success_response(resp);
     }
 
-    static http::response<http::string_body> handle_get_station_detail(int64_t station_id) {
+    static http::response<http::string_body> handle_get_station_detail(
+        int64_t station_id,
+        double user_lat = 0.0,
+        double user_lon = 0.0
+    ) {
         std::string name;
         std::string addr;
+        std::string district = "朝阳区";
+        uint8_t district_code = 2;
         double lat = 0.0;
         double lon = 0.0;
-        double price = 1.45;
         double serv = 0.35;
         double overtime_fee = 5.00;
         int grace_mins = 15;
@@ -237,6 +243,8 @@ public:
         if (static_st) {
             name = static_st->name;
             addr = static_st->address;
+            district_code = static_st->district_code;
+            district = std::string(get_district_name_by_code(district_code));
             lat = static_st->latitude;
             lon = static_st->longitude;
         } else {
@@ -246,7 +254,6 @@ public:
                 addr = mem_st->address;
                 lat = mem_st->latitude;
                 lon = mem_st->longitude;
-                price = mem_st->price_per_kwh;
                 serv = mem_st->service_fee_per_kwh;
                 overtime_fee = mem_st->overtime_fee_per_15min;
                 grace_mins = mem_st->overtime_grace_minutes;
@@ -260,7 +267,6 @@ public:
                     addr = cached_st->address;
                     lat = cached_st->latitude;
                     lon = cached_st->longitude;
-                    price = cached_st->price_per_kwh;
                     serv = cached_st->service_fee_per_kwh;
                     overtime_fee = cached_st->overtime_fee_per_15min;
                     grace_mins = cached_st->overtime_grace_minutes;
@@ -275,7 +281,6 @@ public:
                     addr = st_res->address;
                     lat = st_res->latitude;
                     lon = st_res->longitude;
-                    price = st_res->price_per_kwh;
                     serv = st_res->service_fee_per_kwh;
                     overtime_fee = st_res->overtime_fee_per_15min;
                     grace_mins = st_res->overtime_grace_minutes;
@@ -286,23 +291,42 @@ public:
             }
         }
 
+        double price = StationPriceManager::instance().get_price(station_id);
+        double dist = 0.0;
+        if (user_lat != 0.0 && user_lon != 0.0 && lat != 0.0 && lon != 0.0) {
+            dist = std::round(StationRTree::calculate_distance_km(user_lat, user_lon, lat, lon) * 100.0) / 100.0;
+        }
+
         auto pool_piles = ChargingStatePool::instance().get_piles_by_station(station_id);
         auto summary = ChargingStatePool::instance().get_station_pile_summary(station_id);
+        bool is_on = StationStatusManager::instance().is_online(station_id);
 
         StationDetailResponseData data{
             .station_id = station_id,
+            .id = station_id,
             .station_name = name,
+            .district = district,
+            .district_code = district_code,
             .address = addr,
             .latitude = lat,
             .longitude = lon,
-            .contact_phone = phone,
-            .operating_hours = hours,
+            .distance_km = dist,
             .price_per_kwh = price,
             .service_fee_per_kwh = serv,
             .overtime_fee_per_15min = overtime_fee,
             .overtime_grace_minutes = grace_mins,
             .total_piles = summary.total_piles,
-            .idle_piles = summary.idle_piles
+            .pile_count = summary.total_piles,
+            .idle_piles = summary.idle_piles,
+            .available_count = summary.idle_piles,
+            .fast_piles_idle = summary.fast_piles_idle,
+            .slow_piles_idle = summary.slow_piles_idle,
+            .has_fast_pile = summary.has_fast_pile,
+            .station_status = is_on ? 1 : 2,
+            .is_online = is_on,
+            .contact_phone = phone,
+            .operating_hours = hours,
+            .piles = {}
         };
 
         for (const auto& p : pool_piles) {
