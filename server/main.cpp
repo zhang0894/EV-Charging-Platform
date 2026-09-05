@@ -42,13 +42,19 @@ int main(int argc, char* argv[]) {
 
     const std::string host = "0.0.0.0";
     const unsigned short port = 8080;
-    const std::string db_conninfo = "host=127.0.0.1 port=5432 dbname=postgres user=postgres password=Express1.";
+    const std::string default_conninfo = "host=127.0.0.1 port=5432 dbname=postgres user=postgres password=Express1. sslmode=disable";
+    const char* env_conn = std::getenv("PG_CONNINFO");
+    const std::string db_conninfo = env_conn ? env_conn : default_conninfo;
     const char* env_read_conn = std::getenv("PG_READ_CONNINFO");
     const std::string db_read_conninfo = env_read_conn ? env_read_conn : db_conninfo;
 
     // 1. 初始化数据库读写分离连接池
     std::println(">>> 1. 正在初始化 PostgreSQL 读写分离数据库连接池 (主库写池与只读副本读池)...");
     ev::DbPool::instance().init(db_conninfo, db_read_conninfo, 8, 32);
+    if (!ev::DbPool::instance().is_initialized()) {
+        std::cerr << ">>> [FATAL] 数据库连接失败，服务端终止启动。请检查 PostgreSQL 服务是否已启动并验证连接配置。\n" << std::flush;
+        return 1;
+    }
 
     // 2. 初始化 Redis 缓存中心
     std::println(">>> 2. 正在初始化 Redis 实时/TTL 缓存组件...");

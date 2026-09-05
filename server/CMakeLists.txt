@@ -146,14 +146,6 @@ else()
         target_link_libraries(server PRIVATE ${PostgreSQL_LIBRARIES})
     endif()
 
-    find_package(OpenSSL REQUIRED)
-    if (TARGET OpenSSL::SSL)
-        target_link_libraries(server PRIVATE OpenSSL::SSL OpenSSL::Crypto)
-    else()
-        target_include_directories(server PRIVATE ${OPENSSL_INCLUDE_DIR})
-        target_link_libraries(server PRIVATE ${OPENSSL_LIBRARIES})
-    endif()
-
     target_link_libraries(server PRIVATE
         Threads::Threads
     )

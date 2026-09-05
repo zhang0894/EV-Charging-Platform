@@ -142,6 +142,7 @@ public:
     );
 
     void shutdown();
+    bool is_initialized() const { return is_initialized_; }
 
     // 从指定角色连接池租借连接
     PooledConnection acquire(

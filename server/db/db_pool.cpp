@@ -102,7 +102,10 @@ PGresult* DbConnection::exec_prepared(
 }
 
 std::string DbConnection::last_error() const {
-    return conn_ ? PQerrorMessage(conn_) : "Null connection";
+    if (!conn_) return "Null connection";
+    const char* err = PQerrorMessage(conn_);
+    if (!err || err[0] == '\0') return "Unknown error (empty message)";
+    return std::string(err);
 }
 
 DbPool& DbPool::instance() {
@@ -133,7 +136,9 @@ void DbPool::init(
                 writer_pool_.pool.push(std::move(conn));
                 writer_pool_.total_connections++;
             } else {
-                std::cerr << std::format("[DbPool Warning] Writer conn {} init failed: {}\n", i, conn->last_error());
+                std::string err = conn->last_error();
+                if (err.empty() || err.back() != '\n') err += '\n';
+                std::cerr << "[DbPool Warning] Writer conn " << i << " init failed: " << err << std::flush;
             }
         }
     }
@@ -153,13 +158,27 @@ void DbPool::init(
                 reader_pool_.pool.push(std::move(conn));
                 reader_pool_.total_connections++;
             } else {
-                std::cerr << std::format("[DbPool Warning] Reader conn {} init failed: {}\n", i, conn->last_error());
+                std::string err = conn->last_error();
+                if (err.empty() || err.back() != '\n') err += '\n';
+                std::cerr << "[DbPool Warning] Reader conn " << i << " init failed: " << err << std::flush;
             }
         }
     }
 
-    is_initialized_ = true;
-    std::println("  [DbPool] 读写分离架构初始化完成 (主库写池配额: {}, 从库只读副本池配额: {})", max_connections, max_connections);
+    is_initialized_ = (writer_pool_.total_connections > 0);
+    if (writer_pool_.total_connections == 0) {
+        std::cerr << "\n[DbPool Fatal Error] 无法连接到 PostgreSQL 数据库！\n"
+                  << "  连接配置: " << writer_conninfo << "\n"
+                  << "  请检查:\n"
+                  << "    1. PostgreSQL 服务是否已启动 (如: sudo systemctl status postgresql)\n"
+                  << "    2. 密码或用户名是否匹配 (默认: postgres / Express1.)\n"
+                  << "    3. 可通过环境变量 PG_CONNINFO 传入自定义连接串 (如: export PG_CONNINFO=\"host=127.0.0.1 port=5432 ...\")\n\n"
+                  << std::flush;
+    } else {
+        std::cout << "  [DbPool] 读写分离架构初始化完成 (主库写池已连: " << writer_pool_.total_connections
+                  << "/" << max_connections << ", 从库只读副本池已连: " << reader_pool_.total_connections
+                  << "/" << max_connections << ")\n" << std::flush;
+    }
 }
 
 void DbPool::init(const std::string& conninfo, size_t min_connections, size_t max_connections) {
