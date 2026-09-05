@@ -1,6 +1,8 @@
 #include "mainwindow.h"
 #include "dashboardwidget.h"
 #include "dashboardmodel.h"
+#include "pilestatuswidget.h"
+#include "usermanagementwidget.h"
 #include "ui_mainwindow.h"
 
 #include <QDateTime>
@@ -39,6 +41,28 @@ MainWindow::MainWindow(const QString &authToken, QWidget *parent)
     if (model) {
         model->setAuthToken(authToken);
     }
+
+    // 电桩状态页（索引 1）：用 PileStatusWidget 替换占位页，
+    // 菜单按钮 btnPileStatus(id=1) 与页面索引的映射关系保持不变。
+    PileStatusWidget *pileStatusPage = new PileStatusWidget(this);
+    QWidget *oldPileStatusPage = ui->contentStack->widget(1);
+    ui->contentStack->removeWidget(oldPileStatusPage);
+    ui->contentStack->insertWidget(1, pileStatusPage);
+    delete oldPileStatusPage;
+
+    // 将管理员 Token 传递给 PileStatusModel（首次拉取由页面 showEvent 触发）
+    pileStatusPage->setAuthToken(authToken);
+
+    // 用户管理页（索引 4）：用 UserManagementWidget 替换占位页，
+    // 菜单按钮 btnUserManage(id=4) 与页面索引的映射关系保持不变。
+    UserManagementWidget *userPage = new UserManagementWidget(this);
+    QWidget *oldUserPage = ui->contentStack->widget(4);
+    ui->contentStack->removeWidget(oldUserPage);
+    ui->contentStack->insertWidget(4, userPage);
+    delete oldUserPage;
+
+    // 将管理员 Token 传递给 UserManagementModel（内部随即拉取第 1 页用户列表）
+    userPage->setAuthToken(authToken);
 
     appendLog(tr("系统启动完成，欢迎使用充电桩运营管理平台"));
 }
