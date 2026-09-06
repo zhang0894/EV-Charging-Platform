@@ -11,12 +11,12 @@
 #include <QLabel>
 #include <QMessageBox>
 
-// 表格内"重启"按钮样式（橙红），与深色科技感主题一致
+// 表格内"重启"按钮样式（浅橙底 + 橙色文字），与轻量专业风主题一致
 static const QString kRestartBtnStyle = QStringLiteral(
-    "QPushButton{background-color:#2a2013;color:#ff9f43;"
-    "border:1px solid #5c4520;border-radius:4px;padding:3px 12px;min-width:52px;}"
-    "QPushButton:hover:enabled{background-color:#5c4520;color:#ffffff;border-color:#ff9f43;}"
-    "QPushButton:disabled{color:#5a6b85;border-color:#1e2d45;background-color:#162238;}");
+    "QPushButton{background-color:#fef3e2;color:#d97706;"
+    "border:1px solid #f8dfb0;border-radius:4px;padding:3px 12px;min-width:52px;}"
+    "QPushButton:hover:enabled{background-color:#fce8c7;color:#b45309;border-color:#f59e0b;}"
+    "QPushButton:disabled{color:#8a9aa8;border-color:#e8ecf0;background-color:#f5f7fa;}");
 
 PileManagementWidget::PileManagementWidget(QWidget *parent)
     : QWidget(parent)
@@ -52,38 +52,38 @@ void PileManagementWidget::setAuthToken(const QString &token)
     applyFiltersAndFetch(1);
 }
 
-// ------------- 界面构建（配色参考既有模块深色科技风） -------------
+// ------------- 界面构建（轻量专业风：白底 + 浅边框 + 蓝色主色） -------------
 void PileManagementWidget::buildUi()
 {
     setObjectName(QStringLiteral("pileManagementPage"));
 
     setStyleSheet(QStringLiteral(
-        /* 顶部工具栏容器 */
-        "QFrame#pileToolbar{background-color:#0f1b2d;border:1px solid #1e2d45;border-radius:8px;}"
+        /* 顶部工具栏容器：白底浅边框 */
+        "QFrame#pileToolbar{background-color:#ffffff;border:1px solid #e8ecf0;border-radius:8px;}"
         /* 筛选下拉框 */
-        "QComboBox#pileStatusCombo,QComboBox#pileTypeCombo{background-color:#0a1424;color:#e6e9ef;"
-        "border:1px solid #2a3b55;border-radius:4px;padding:6px 12px;}"
-        "QComboBox#pileStatusCombo:hover,QComboBox#pileTypeCombo:hover{border:1px solid #00d4ff;}"
+        "QComboBox#pileStatusCombo,QComboBox#pileTypeCombo{background-color:#ffffff;color:#1a2332;"
+        "border:1px solid #d9dee5;border-radius:6px;padding:6px 12px;}"
+        "QComboBox#pileStatusCombo:hover,QComboBox#pileTypeCombo:hover{border:1px solid #2b7bff;}"
         "QComboBox#pileStatusCombo QAbstractItemView,QComboBox#pileTypeCombo QAbstractItemView"
-        "{background-color:#0f1b2d;color:#e6e9ef;selection-background-color:#1e3a5f;selection-color:#ffffff;}"
-        /* 查询/刷新按钮（与既有模块同风格） */
-        "QPushButton#btnPileQuery,QPushButton#btnPileRefresh{background-color:#1a2740;"
-        "color:#b8c2d1;border:1px solid #2a3b55;border-radius:4px;padding:6px 18px;min-width:72px;}"
-        "QPushButton#btnPileQuery:hover,QPushButton#btnPileRefresh:hover{border:1px solid #00d4ff;color:#ffffff;}"
-        /* 表格 */
-        "QTableView#pileTable{background-color:#0f1b2d;alternate-background-color:#12203a;"
-        "color:#e6e9ef;gridline-color:#1e2d45;border:1px solid #1e2d45;border-radius:8px;"
-        "selection-background-color:#1e3a5f;selection-color:#ffffff;}"
-        "QTableView#pileTable QHeaderView::section{background-color:#162238;color:#8b9bb4;"
-        "border:none;border-bottom:1px solid #2a3b55;padding:8px;font-weight:600;}"
-        "QTableView#pileTable QTableCornerButton::section{background-color:#162238;border:none;}"
+        "{background-color:#ffffff;color:#1a2332;selection-background-color:#e8f0fe;selection-color:#1a5cff;}"
+        /* 查询/刷新按钮：白底浅描边，hover 蓝色 */
+        "QPushButton#btnPileQuery,QPushButton#btnPileRefresh{background-color:#ffffff;"
+        "color:#1a2332;border:1px solid #d9dee5;border-radius:6px;padding:6px 18px;min-width:72px;}"
+        "QPushButton#btnPileQuery:hover,QPushButton#btnPileRefresh:hover{border:1px solid #2b7bff;color:#2b7bff;}"
+        /* 表格：极简浅色 */
+        "QTableView#pileTable{background-color:#ffffff;alternate-background-color:#f8fafc;"
+        "color:#1a2332;gridline-color:#eef1f5;border:1px solid #e8ecf0;border-radius:8px;"
+        "selection-background-color:#e8f0fe;selection-color:#1a5cff;}"
+        "QTableView#pileTable QHeaderView::section{background-color:#f8fafc;color:#4a5a6e;"
+        "border:none;border-bottom:1px solid #e8ecf0;padding:8px;font-weight:600;}"
+        "QTableView#pileTable QTableCornerButton::section{background-color:#f8fafc;border:none;}"
         /* 分页按钮 */
-        "QPushButton#btnPilePrev,QPushButton#btnPileNext{background-color:#1a2740;"
-        "color:#b8c2d1;border:1px solid #2a3b55;border-radius:4px;padding:5px 16px;}"
-        "QPushButton#btnPilePrev:hover:enabled,QPushButton#btnPileNext:hover:enabled{border:1px solid #00d4ff;color:#ffffff;}"
-        "QPushButton#btnPilePrev:disabled,QPushButton#btnPileNext:disabled{color:#5a6b85;border-color:#1e2d45;}"
+        "QPushButton#btnPilePrev,QPushButton#btnPileNext{background-color:#ffffff;"
+        "color:#1a2332;border:1px solid #d9dee5;border-radius:6px;padding:5px 16px;}"
+        "QPushButton#btnPilePrev:hover:enabled,QPushButton#btnPileNext:hover:enabled{border:1px solid #2b7bff;color:#2b7bff;}"
+        "QPushButton#btnPilePrev:disabled,QPushButton#btnPileNext:disabled{color:#8a9aa8;border-color:#e8ecf0;}"
         /* 页码信息 */
-        "QLabel#pilePageLabel{color:#8b9bb4;font-size:13px;}"));
+        "QLabel#pilePageLabel{color:#4a5a6e;font-size:13px;}"));
 
     auto *rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(20, 16, 20, 12);

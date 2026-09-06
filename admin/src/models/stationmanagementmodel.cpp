@@ -11,14 +11,52 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+#include <QApplication>
+#include <QFontMetrics>
+#include <QTableView>
+#include <QWidget>
+
+namespace {
+// 长文本单元格处理：按表格列宽以右侧省略号（Qt::ElideRight）截断显示，
+// 完整文本通过 setToolTip() 悬停展示；文本短于可用宽度时原样显示、不设 ToolTip。
+// scope 为 Model 的父对象（管理页 Widget），viewName 为目标 QTableView 的 objectName；
+// 若视图尚未显示（数据先于页面打开到达），退化为“超过 30 个字符才截断”的规则。
+void applyElidedCellText(QStandardItem *item, const QString &fullText,
+                         QObject *scope, const char *viewName, int column)
+{
+    if (item == nullptr) return;
+
+    const QTableView *view = nullptr;
+    if (const auto *scopeWidget = qobject_cast<const QWidget *>(scope)) {
+        view = scopeWidget->findChild<const QTableView *>(QLatin1StringView(viewName));
+    }
+
+    const QFontMetrics fm(view ? view->font() : QApplication::font());
+    int available = 0;
+    if (view != nullptr && view->isVisible() && view->columnWidth(column) > 0) {
+        available = view->columnWidth(column) - 16; // 减去单元格左右内边距
+    } else {
+        // 视图未显示或列宽无效：按 30 个字符的宽度估算
+        available = fm.horizontalAdvance(fullText.left(30));
+    }
+
+    if (available > 0 && fm.horizontalAdvance(fullText) <= available) {
+        item->setText(fullText); // 宽度足够：原样显示，不设 ToolTip
+        return;
+    }
+    item->setText(fm.elidedText(fullText, Qt::ElideRight, qMax(available, 1)));
+    item->setToolTip(fullText); // 悬停显示未截断的完整内容
+}
+} // namespace
+
 StationManagementModel::StationManagementModel(QObject *parent)
     : QObject(parent)
 {
     m_tableModel = new QStandardItemModel(this);
     m_tableModel->setColumnCount(ColCount);
     m_tableModel->setHorizontalHeaderLabels({
-        tr("站ID"), tr("站名"), tr("地址"),
-        tr("总桩数"), tr("在线率"), tr("状态"), tr("操作")
+        tr("站ID"), tr("站名"), tr("地址"), tr("经纬度"),
+        tr("总桩数"), tr("可用率"), tr("状态"), tr("操作")
     });
 
     // 注意：网络请求在 Widget 调用 fetchStations() 后才发起（构造阶段尚无 Token）。
@@ -50,13 +88,15 @@ void StationManagementModel::fetchStations(int page, int pageSize,
 
     ensureNetworkManager();
 
-    QUrl url(m_serverBase + QStringLiteral("/api/v1/admin/stations"));
+    QUrl url(m_serverBase + QStringLiteral("/api/v1/stations/inquire"));
     QUrlQuery query;
     query.addQueryItem(QStringLiteral("page"), QString::number(m_page));
     query.addQueryItem(QStringLiteral("page_size"), QString::number(m_pageSize));
     if (!m_nameFilter.isEmpty()) {
         query.addQueryItem(QStringLiteral("name"), m_nameFilter);
     }
+    // 状态筛选：后端新接口已支持 status 参数（1=营业中/ONLINE，2=暂停营业/OFFLINE）；
+    // "全部"(m_statusFilter < 1) 时不携带该参数。
     if (m_statusFilter >= 1) {
         query.addQueryItem(QStringLiteral("status"), QString::number(m_statusFilter));
     }
@@ -227,33 +267,63 @@ void StationManagementModel::populateStations(const QJsonArray &stations)
         const int stationId = s.value(QStringLiteral("station_id")).toInt();
         const QString name = s.value(QStringLiteral("station_name")).toString();
         const QString address = s.value(QStringLiteral("address")).toString();
+        const double longitude = s.value(QStringLiteral("longitude")).toDouble();
+        const double latitude = s.value(QStringLiteral("latitude")).toDouble();
         const int totalPiles = s.value(QStringLiteral("total_piles")).toInt();
-        const double onlineRate = s.value(QStringLiteral("online_rate")).toDouble();
-        const int status = s.value(QStringLiteral("status")).toInt();
+        const int idlePiles = s.value(QStringLiteral("idle_piles")).toInt();
+        // 新接口无 online_rate 字段：可用率 = idle_piles / total_piles * 100；
+        // 模拟电站 total_piles=0、idle_piles=0，显示 0.0%。
+        double availRate = 0.0;
+        if (totalPiles > 0) {
+            availRate = idlePiles * 100.0 / totalPiles;
+        } else if (s.contains(QStringLiteral("online_rate"))) {
+            // 兼容旧字段（模拟电站 JSON 中仍为 0.0）
+            availRate = s.value(QStringLiteral("online_rate")).toDouble();
+        }
+        // 状态字段：新接口为 station_status（int），模拟电站 JSON 仍用 status，做兼容读取
+        int status = s.value(QStringLiteral("station_status")).toInt(0);
+        if (status == 0 && s.contains(QStringLiteral("status"))) {
+            status = s.value(QStringLiteral("status")).toInt();
+        }
 
         // 站ID 列
         QStandardItem *idItem = new QStandardItem(QString::number(stationId));
         idItem->setTextAlignment(Qt::AlignCenter);
-        // 站名列
-        QStandardItem *nameItem = new QStandardItem(name);
+        // 站名列（超长省略号截断，悬停显示电站全称）
+        QStandardItem *nameItem = new QStandardItem();
         nameItem->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        // 地址列
-        QStandardItem *addrItem = new QStandardItem(address);
+        applyElidedCellText(nameItem, name, parent(), "stationTable",
+                            static_cast<int>(NameCol));
+        // 地址列（超长省略号截断，悬停显示完整地址）
+        QStandardItem *addrItem = new QStandardItem();
         addrItem->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        applyElidedCellText(addrItem, address, parent(), "stationTable",
+                            static_cast<int>(AddressCol));
+        // 经纬度列：格式 "经度, 纬度"（各保留 6 位小数）；
+        // 模拟电站新增时未填写经纬度（值为 0）则显示 "-"
+        QStandardItem *lngLatItem = new QStandardItem();
+        lngLatItem->setTextAlignment(Qt::AlignCenter);
+        if (longitude != 0.0 || latitude != 0.0) {
+            lngLatItem->setText(QStringLiteral("%1, %2")
+                                    .arg(QString::number(longitude, 'f', 6))
+                                    .arg(QString::number(latitude, 'f', 6)));
+        } else {
+            lngLatItem->setText(QStringLiteral("-"));
+        }
         // 总桩数列
         QStandardItem *pilesItem = new QStandardItem(QString::number(totalPiles));
         pilesItem->setTextAlignment(Qt::AlignCenter);
-        // 在线率列（保留一位小数）
+        // 可用率列（idle_piles/total_piles，保留一位小数）
         QStandardItem *rateItem = new QStandardItem(
-            QStringLiteral("%1%").arg(QString::number(onlineRate, 'f', 1)));
+            QStringLiteral("%1%").arg(QString::number(availRate, 'f', 1)));
         rateItem->setTextAlignment(Qt::AlignCenter);
-        // 状态列：1=正常运营（绿） 2=维护中（橙），原始值存 StatusRole
+        // 状态列：1=正常运营/营业中（绿） 2=暂停营业/下线（橙），原始值存 StatusRole
         const bool offline = (status == 2);
         QStandardItem *stItem = new QStandardItem(
-            offline ? tr("维护中") : tr("正常运营"));
+            offline ? tr("暂停营业") : tr("正常运营"));
         stItem->setTextAlignment(Qt::AlignCenter);
-        stItem->setForeground(offline ? QColor(0xff, 0x9f, 0x43)
-                                      : QColor(0x2e, 0xcc, 0x71));
+        stItem->setForeground(offline ? QColor(0xd9, 0x77, 0x06)
+                                      : QColor(0x16, 0xa3, 0x4a));
         stItem->setData(status, StatusRole);
         // 操作列占位：按钮由 Widget 依据本行的角色数据动态安装
         QStandardItem *actItem = new QStandardItem(QString());
@@ -262,8 +332,8 @@ void StationManagementModel::populateStations(const QJsonArray &stations)
         actItem->setData(name, NameRole);
         actItem->setTextAlignment(Qt::AlignCenter);
 
-        m_tableModel->appendRow({idItem, nameItem, addrItem, pilesItem,
-                                 rateItem, stItem, actItem});
+        m_tableModel->appendRow({idItem, nameItem, addrItem, lngLatItem,
+                                 pilesItem, rateItem, stItem, actItem});
     }
 }
 
@@ -277,7 +347,7 @@ void StationManagementModel::handleStationsReply(QNetworkReply *reply)
     const QByteArray body = reply->readAll();
     reply->deleteLater();
 
-    const QString apiTag = QStringLiteral("GET /api/v1/admin/stations");
+    const QString apiTag = QStringLiteral("GET /api/v1/stations/inquire");
 
     if (netError != QNetworkReply::NoError) {
         const QString msg = QStringLiteral("%1 网络请求失败 (HTTP %2): %3")

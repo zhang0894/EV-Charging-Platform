@@ -45,14 +45,14 @@ void PileStatusWidget::buildUi()
 {
     setObjectName(QStringLiteral("pileStatusPage"));
 
-    // 卡片容器样式：背景 #0f1b2d / 边框 #1e2d45 / 圆角 8px
+    // 卡片容器样式：白色背景 / 浅边框 #e8ecf0 / 圆角 8px（轻量专业风）
     setStyleSheet(QStringLiteral(
         "QFrame#cardPileTotal,QFrame#cardPileInUse,QFrame#cardPileIdle,"
         "QFrame#cardPileFault,QFrame#cardPileRate{"
-        "background-color:#0f1b2d;border:1px solid #1e2d45;border-radius:8px;}"
-        "QPushButton#btnPileRefresh{background-color:#1a2740;color:#b8c2d1;"
-        "border:1px solid #2a3b55;border-radius:4px;padding:6px 18px;min-width:72px;}"
-        "QPushButton#btnPileRefresh:hover{border:1px solid #00d4ff;color:#ffffff;}"));
+        "background-color:#ffffff;border:1px solid #e8ecf0;border-radius:8px;}"
+        "QPushButton#btnPileRefresh{background-color:#ffffff;color:#1a2332;"
+        "border:1px solid #d9dee5;border-radius:6px;padding:6px 18px;min-width:72px;}"
+        "QPushButton#btnPileRefresh:hover{border:1px solid #2b7bff;color:#2b7bff;}"));
 
     auto *rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(20, 16, 20, 16);
@@ -65,7 +65,7 @@ void PileStatusWidget::buildUi()
 
     auto *pageTitle = new QLabel(tr("电桩状态概览"), topBar);
     pageTitle->setStyleSheet(QStringLiteral(
-        "color:#e6e9ef;font-size:16px;font-weight:600;background:transparent;"));
+        "color:#1a2332;font-size:16px;font-weight:600;background:transparent;"));
 
     m_btnRefresh = new QPushButton(tr("刷新"), topBar);
     m_btnRefresh->setObjectName(QStringLiteral("btnPileRefresh"));
@@ -123,11 +123,11 @@ QFrame *PileStatusWidget::makeCard(const QString &title, const QString &objectNa
 
     auto *lblTitle = new QLabel(title, card);
     lblTitle->setStyleSheet(QStringLiteral(
-        "color:#8b9bb4;font-size:14px;font-weight:500;background:transparent;border:none;"));
+        "color:#4a5a6e;font-size:14px;font-weight:500;background:transparent;border:none;"));
 
     auto *lblValue = new QLabel(QStringLiteral("--"), card);
     lblValue->setStyleSheet(QStringLiteral(
-        "color:#ffffff;font-size:30px;font-weight:700;background:transparent;border:none;"));
+        "color:#1a2332;font-size:30px;font-weight:700;background:transparent;border:none;"));
 
     lay->addWidget(lblTitle);
     lay->addWidget(lblValue);
@@ -135,7 +135,7 @@ QFrame *PileStatusWidget::makeCard(const QString &title, const QString &objectNa
     if (subLabel) {
         auto *lblSub = new QLabel(QStringLiteral(""), card);
         lblSub->setStyleSheet(QStringLiteral(
-            "color:#5a6b85;font-size:12px;background:transparent;border:none;"));
+            "color:#8a9aa8;font-size:12px;background:transparent;border:none;"));
         lay->addWidget(lblSub);
         *subLabel = lblSub;
     }
@@ -163,12 +163,12 @@ void PileStatusWidget::refreshCards()
     m_lblTotal->setText(QString::number(
         d.value(QStringLiteral("total_piles")).toInt()));
 
-    // 卡片 2：在用桩（青色）+ 占比
+    // 卡片 2：在用桩（蓝色）+ 占比
     const int inUse = d.value(QStringLiteral("in_use_count")).toInt();
     const double inUsePct = d.value(QStringLiteral("in_use_percentage")).toDouble();
     m_lblInUse->setText(QString::number(inUse));
     m_lblInUse->setStyleSheet(QStringLiteral(
-        "color:#00d4ff;font-size:30px;font-weight:700;background:transparent;border:none;"));
+        "color:#2b7bff;font-size:30px;font-weight:700;background:transparent;border:none;"));
     m_lblInUseSub->setText(tr("占比 %1%").arg(QString::number(inUsePct, 'f', 1)));
 
     // 卡片 3：闲置桩（绿色）+ 占比
@@ -176,7 +176,7 @@ void PileStatusWidget::refreshCards()
     const double idlePct = d.value(QStringLiteral("idle_percentage")).toDouble();
     m_lblIdle->setText(QString::number(idle));
     m_lblIdle->setStyleSheet(QStringLiteral(
-        "color:#2ecc71;font-size:30px;font-weight:700;background:transparent;border:none;"));
+        "color:#22c55e;font-size:30px;font-weight:700;background:transparent;border:none;"));
     m_lblIdleSub->setText(tr("占比 %1%").arg(QString::number(idlePct, 'f', 1)));
 
     // 卡片 4：故障桩（红色）+ 占比
@@ -184,14 +184,14 @@ void PileStatusWidget::refreshCards()
     const double faultPct = d.value(QStringLiteral("fault_percentage")).toDouble();
     m_lblFault->setText(QString::number(fault));
     m_lblFault->setStyleSheet(QStringLiteral(
-        "color:#ff5c5c;font-size:30px;font-weight:700;background:transparent;border:none;"));
+        "color:#ef4444;font-size:30px;font-weight:700;background:transparent;border:none;"));
     m_lblFaultSub->setText(tr("占比 %1%").arg(QString::number(faultPct, 'f', 1)));
 
-    // 卡片 5：在线率（青色），副标题为 %
+    // 卡片 5：在线率（蓝色），副标题为 %
     const double onlineRate = d.value(QStringLiteral("online_rate")).toDouble();
     m_lblRate->setText(QString::number(onlineRate, 'f', 1));
     m_lblRate->setStyleSheet(QStringLiteral(
-        "color:#00d4ff;font-size:30px;font-weight:700;background:transparent;border:none;"));
+        "color:#2b7bff;font-size:30px;font-weight:700;background:transparent;border:none;"));
     m_lblRateSub->setText(QStringLiteral("%"));
 }
 

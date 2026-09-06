@@ -23,8 +23,8 @@ class PileStatusModel;
  *   - showEvent 中调用 fetchData()，每次切到该页自动刷新；
  *   - 右上角"刷新"按钮点击后调用 fetchData()。
  *
- * 卡片样式与 DashboardWidget 一致（深色科技风：
- * 背景 #0f1b2d，边框 #1e2d45，圆角 8px，内边距 16px）。
+ * 卡片样式与 DashboardWidget 一致（轻量专业风：
+ * 背景 #ffffff，边框 #e8ecf0，圆角 8px，内边距 16px）。
  */
 class PileStatusWidget : public QWidget
 {

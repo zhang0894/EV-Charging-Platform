@@ -50,17 +50,17 @@ DashboardWidget::~DashboardWidget()
 // ------------- 图表骨架初始化 -------------
 void DashboardWidget::initChart()
 {
-    // 折线样式：青色高光
-    QPen pen(QColor(0x00, 0xd4, 0xff));
+    // 折线样式：主题蓝
+    QPen pen(QColor(0x2b, 0x7b, 0xff));
     pen.setWidth(2);
     m_series->setPen(pen);
     m_series->setPointsVisible(true);
 
-    // 图表标题与背景，融入深色科技感主题
+    // 图表标题与背景，融入浅色专业风主题
     m_chart->setTitle(QStringLiteral("营收趋势"));
-    m_chart->setTitleBrush(QBrush(QColor(0xe6, 0xe9, 0xef)));
-    m_chart->setBackgroundBrush(QBrush(QColor(0x0f, 0x1b, 0x2d)));
-    m_chart->setBackgroundPen(QPen(QColor(0x1e, 0x2d, 0x45)));
+    m_chart->setTitleBrush(QBrush(QColor(0x1a, 0x23, 0x32)));
+    m_chart->setBackgroundBrush(QBrush(QColor(0xff, 0xff, 0xff)));
+    m_chart->setBackgroundPen(QPen(QColor(0xe8, 0xec, 0xf0)));
     m_chart->legend()->hide();
     // 统一用 setMargins 控制图表内边距（避免访问 QGraphicsLayout 不完整类型）。
     m_chart->setMargins(QMargins(2, 2, 2, 2));
@@ -68,18 +68,18 @@ void DashboardWidget::initChart()
     // X 轴：日期轴
     m_axisX->setTitleText(QStringLiteral("日期"));
     m_axisX->setFormat(QStringLiteral("MM-dd"));
-    m_axisX->setLabelsColor(QColor(0x8b, 0x9b, 0xb4));
-    m_axisX->setGridLineColor(QColor(0x1e, 0x2d, 0x45));
-    m_axisX->setLinePenColor(QColor(0x2a, 0x3b, 0x55));
-    m_axisX->setTitleBrush(QBrush(QColor(0x8b, 0x9b, 0xb4)));
+    m_axisX->setLabelsColor(QColor(0x4a, 0x5a, 0x6e));
+    m_axisX->setGridLineColor(QColor(0xee, 0xf1, 0xf5));
+    m_axisX->setLinePenColor(QColor(0xd9, 0xde, 0xe5));
+    m_axisX->setTitleBrush(QBrush(QColor(0x4a, 0x5a, 0x6e)));
 
     // Y 轴：营收轴
     m_axisY->setTitleText(QStringLiteral("营收 (元)"));
-    m_axisY->setLabelsColor(QColor(0x8b, 0x9b, 0xb4));
-    m_axisY->setGridLineColor(QColor(0x1e, 0x2d, 0x45));
-    m_axisY->setLinePenColor(QColor(0x2a, 0x3b, 0x55));
+    m_axisY->setLabelsColor(QColor(0x4a, 0x5a, 0x6e));
+    m_axisY->setGridLineColor(QColor(0xee, 0xf1, 0xf5));
+    m_axisY->setLinePenColor(QColor(0xd9, 0xde, 0xe5));
     m_axisY->setLabelFormat("%.0f");
-    m_axisY->setTitleBrush(QBrush(QColor(0x8b, 0x9b, 0xb4)));
+    m_axisY->setTitleBrush(QBrush(QColor(0x4a, 0x5a, 0x6e)));
 
     // 组装
     m_chart->addSeries(m_series);
@@ -90,7 +90,7 @@ void DashboardWidget::initChart()
 
     ui->chartView->setChart(m_chart);
     ui->chartView->setRenderHint(QPainter::Antialiasing);
-    ui->chartView->setBackgroundBrush(QBrush(QColor(0x0f, 0x1b, 0x2d)));
+    ui->chartView->setBackgroundBrush(QBrush(QColor(0xff, 0xff, 0xff)));
 }
 
 // ------------- 从 Model 读取汇总刷新卡片 -------------

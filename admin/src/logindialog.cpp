@@ -37,7 +37,7 @@ LoginDialog::LoginDialog(QWidget *parent)
     m_loginButton->setObjectName(QStringLiteral("btnLogin"));
     m_loginButton->setCursor(Qt::PointingHandCursor);
 
-    m_errorLabel->setStyleSheet(QStringLiteral("color: #ff6b6b; font-size: 12px;"));
+    m_errorLabel->setStyleSheet(QStringLiteral("color: #ef4444; font-size: 12px;"));
     m_errorLabel->setAlignment(Qt::AlignCenter);
     m_errorLabel->hide();
 

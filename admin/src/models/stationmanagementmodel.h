@@ -20,13 +20,16 @@ QT_END_NAMESPACE
  * 继承自 QObject，内部持有 QStandardItemModel 作为表格数据源（每行一个充电站），
  * 通过 getModel() 提供给 Widget 绑定 QTableView。
  *
- * 接口对应《端口设计文档》3.3 节：
- *   - GET /api/v1/admin/stations                        分页查询充电站列表
- *       查询参数: page / page_size / name(可选) / status(可选, 1=正常运营 2=维护中)
- *   - GET /api/v1/admin/stations/{id}/sales-stats       单站销售业绩
+ * 接口对应《端口设计文档》3.3 节（新 API）：
+ *   - GET /api/v1/stations/inquire                  分页查询充电站列表
+ *       查询参数: page / page_size / name(可选)
+ *       注：新接口不支持 status 筛选（状态筛选下拉已暂时隐藏）；
+ *           无 online_rate 字段，可用率由 idle_piles/total_piles 计算；
+ *           状态字段为 station_status（模拟电站 JSON 仍用 status，做兼容读取）。
+ *   - GET /api/v1/admin/stations/{id}/sales-stats   单站销售业绩（旧路径，待后端确认）
  *       查询参数: time_range(today / 7d / 30d)
- *   - POST /api/v1/admin/stations/{id}/online           充电站上线
- *   - POST /api/v1/admin/stations/{id}/offline          充电站下线
+ *   - POST /api/v1/admin/stations/{id}/online       充电站上线（旧路径，待后端确认）
+ *   - POST /api/v1/admin/stations/{id}/offline      充电站下线（旧路径，待后端确认）
  *
  * 模拟数据方案（真实充电站来自高德地图 API，不写库）：
  *   - m_mockStations 保存本次会话中用户新增的模拟电站，ID 为负数(-1,-2,...)；
@@ -36,22 +39,23 @@ QT_END_NAMESPACE
  *   - 程序退出时 m_mockStations 自然销毁，不写数据库。
  *
  * 统一响应信封：{ code, msg, data, timestamp }，code==0 表示成功。
- * 表格列顺序：站ID | 站名 | 地址 | 总桩数 | 在线率 | 状态 | 操作(占位)
+ * 表格列顺序：站ID | 站名 | 地址 | 经纬度 | 总桩数 | 可用率 | 状态 | 操作(占位)
  */
 class StationManagementModel : public QObject
 {
     Q_OBJECT
 public:
-    /** 列索引：站ID / 站名 / 地址 / 总桩数 / 在线率 / 状态 / 操作 */
+    /** 列索引：站ID / 站名 / 地址 / 经纬度 / 总桩数 / 在线率 / 状态 / 操作 */
     enum Column {
         StationIdCol = 0,
         NameCol,
         AddressCol,
+        LngLatCol,
         TotalPilesCol,
         OnlineRateCol,
         StatusCol,
         ActionCol,
-        ColCount = 7
+        ColCount = 8
     };
 
     /** 行自定义数据角色（Widget 构建操作按钮时读取） */

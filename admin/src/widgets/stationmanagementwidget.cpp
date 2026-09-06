@@ -7,6 +7,7 @@
 #include <QFormLayout>
 #include <QFrame>
 #include <QLineEdit>
+#include <QSpinBox>
 #include <QComboBox>
 #include <QPushButton>
 #include <QTableView>
@@ -19,21 +20,21 @@
 #include <QTableWidget>
 #include <QJsonDocument>
 
-// 表格内操作按钮样式（详情=青 / 上线=绿 / 下线=橙红），与深色科技感主题一致
+// 表格内操作按钮样式（详情=蓝 / 上线=绿 / 下线=橙），与轻量专业风主题一致
 static const QString kDetailBtnStyle = QStringLiteral(
-    "QPushButton{background-color:#0e2536;color:#00d4ff;"
-    "border:1px solid #1f4a63;border-radius:4px;padding:3px 10px;min-width:44px;}"
-    "QPushButton:hover{background-color:#1f4a63;color:#ffffff;border-color:#00d4ff;}");
+    "QPushButton{background-color:#e8f0fe;color:#1a5cff;"
+    "border:1px solid #c0d6ff;border-radius:4px;padding:3px 10px;min-width:44px;}"
+    "QPushButton:hover{background-color:#d4e4ff;color:#1450e0;border-color:#2b7bff;}");
 
 static const QString kOnlineBtnStyle = QStringLiteral(
-    "QPushButton{background-color:#12291f;color:#2ecc71;"
-    "border:1px solid #1f5c40;border-radius:4px;padding:3px 10px;min-width:44px;}"
-    "QPushButton:hover{background-color:#1f5c40;color:#ffffff;border-color:#2ecc71;}");
+    "QPushButton{background-color:#e8f9ee;color:#16a34a;"
+    "border:1px solid #b7ebc9;border-radius:4px;padding:3px 10px;min-width:44px;}"
+    "QPushButton:hover{background-color:#c9f2d7;color:#15803d;border-color:#22c55e;}");
 
 static const QString kOfflineBtnStyle = QStringLiteral(
-    "QPushButton{background-color:#2a2013;color:#ff9f43;"
-    "border:1px solid #5c4520;border-radius:4px;padding:3px 10px;min-width:44px;}"
-    "QPushButton:hover{background-color:#5c4520;color:#ffffff;border-color:#ff9f43;}");
+    "QPushButton{background-color:#fef3e2;color:#d97706;"
+    "border:1px solid #f8dfb0;border-radius:4px;padding:3px 10px;min-width:44px;}"
+    "QPushButton:hover{background-color:#fce8c7;color:#b45309;border-color:#f59e0b;}");
 
 StationManagementWidget::StationManagementWidget(QWidget *parent)
     : QWidget(parent)
@@ -80,46 +81,46 @@ void StationManagementWidget::setAuthToken(const QString &token)
     applyFiltersAndFetch(1);
 }
 
-// ------------- 界面构建（配色参考 UserManagementWidget 深色科技风） -------------
+// ------------- 界面构建（轻量专业风：白底 + 浅边框 + 蓝色主色） -------------
 void StationManagementWidget::buildUi()
 {
     setObjectName(QStringLiteral("stationManagementPage"));
 
     setStyleSheet(QStringLiteral(
-        /* 顶部工具栏容器 */
-        "QFrame#stationToolbar{background-color:#0f1b2d;border:1px solid #1e2d45;border-radius:8px;}"
+        /* 顶部工具栏容器：白底浅边框 */
+        "QFrame#stationToolbar{background-color:#ffffff;border:1px solid #e8ecf0;border-radius:8px;}"
         /* 搜索框 */
-        "QLineEdit#stationSearchEdit{background-color:#0a1424;color:#e6e9ef;"
-        "border:1px solid #2a3b55;border-radius:4px;padding:6px 10px;}"
-        "QLineEdit#stationSearchEdit:focus{border:1px solid #00d4ff;}"
+        "QLineEdit#stationSearchEdit{background-color:#ffffff;color:#1a2332;"
+        "border:1px solid #d9dee5;border-radius:6px;padding:6px 10px;}"
+        "QLineEdit#stationSearchEdit:focus{border:1px solid #2b7bff;}"
         /* 状态筛选下拉框 */
-        "QComboBox#stationStatusCombo{background-color:#0a1424;color:#e6e9ef;"
-        "border:1px solid #2a3b55;border-radius:4px;padding:6px 12px;}"
-        "QComboBox#stationStatusCombo:hover{border:1px solid #00d4ff;}"
-        "QComboBox#stationStatusCombo QAbstractItemView{background-color:#0f1b2d;"
-        "color:#e6e9ef;selection-background-color:#1e3a5f;selection-color:#ffffff;}"
-        /* 查询/刷新按钮（与用户管理页同风格） */
-        "QPushButton#btnStationQuery,QPushButton#btnStationRefresh{background-color:#1a2740;"
-        "color:#b8c2d1;border:1px solid #2a3b55;border-radius:4px;padding:6px 18px;min-width:72px;}"
-        "QPushButton#btnStationQuery:hover,QPushButton#btnStationRefresh:hover{border:1px solid #00d4ff;color:#ffffff;}"
-        /* 新增电站按钮：青色高亮主操作 */
-        "QPushButton#btnStationAdd{background-color:#0e3a4d;color:#00d4ff;"
-        "border:1px solid #1f6a8c;border-radius:4px;padding:6px 18px;min-width:88px;}"
-        "QPushButton#btnStationAdd:hover{background-color:#1f6a8c;color:#ffffff;border-color:#00d4ff;}"
-        /* 表格 */
-        "QTableView#stationTable{background-color:#0f1b2d;alternate-background-color:#12203a;"
-        "color:#e6e9ef;gridline-color:#1e2d45;border:1px solid #1e2d45;border-radius:8px;"
-        "selection-background-color:#1e3a5f;selection-color:#ffffff;}"
-        "QTableView#stationTable QHeaderView::section{background-color:#162238;color:#8b9bb4;"
-        "border:none;border-bottom:1px solid #2a3b55;padding:8px;font-weight:600;}"
-        "QTableView#stationTable QTableCornerButton::section{background-color:#162238;border:none;}"
+        "QComboBox#stationStatusCombo{background-color:#ffffff;color:#1a2332;"
+        "border:1px solid #d9dee5;border-radius:6px;padding:6px 12px;}"
+        "QComboBox#stationStatusCombo:hover{border:1px solid #2b7bff;}"
+        "QComboBox#stationStatusCombo QAbstractItemView{background-color:#ffffff;"
+        "color:#1a2332;selection-background-color:#e8f0fe;selection-color:#1a5cff;}"
+        /* 查询/刷新按钮：白底浅描边，hover 蓝色 */
+        "QPushButton#btnStationQuery,QPushButton#btnStationRefresh{background-color:#ffffff;"
+        "color:#1a2332;border:1px solid #d9dee5;border-radius:6px;padding:6px 18px;min-width:72px;}"
+        "QPushButton#btnStationQuery:hover,QPushButton#btnStationRefresh:hover{border:1px solid #2b7bff;color:#2b7bff;}"
+        /* 新增电站按钮：蓝色填充主操作 */
+        "QPushButton#btnStationAdd{background-color:#2b7bff;color:#ffffff;"
+        "border:1px solid #2b7bff;border-radius:6px;padding:6px 18px;min-width:88px;font-weight:600;}"
+        "QPushButton#btnStationAdd:hover{background-color:#1a5cff;border-color:#1a5cff;}"
+        /* 表格：极简浅色 */
+        "QTableView#stationTable{background-color:#ffffff;alternate-background-color:#f8fafc;"
+        "color:#1a2332;gridline-color:#eef1f5;border:1px solid #e8ecf0;border-radius:8px;"
+        "selection-background-color:#e8f0fe;selection-color:#1a5cff;}"
+        "QTableView#stationTable QHeaderView::section{background-color:#f8fafc;color:#4a5a6e;"
+        "border:none;border-bottom:1px solid #e8ecf0;padding:8px;font-weight:600;}"
+        "QTableView#stationTable QTableCornerButton::section{background-color:#f8fafc;border:none;}"
         /* 分页按钮 */
-        "QPushButton#btnStationPrev,QPushButton#btnStationNext{background-color:#1a2740;"
-        "color:#b8c2d1;border:1px solid #2a3b55;border-radius:4px;padding:5px 16px;}"
-        "QPushButton#btnStationPrev:hover:enabled,QPushButton#btnStationNext:hover:enabled{border:1px solid #00d4ff;color:#ffffff;}"
-        "QPushButton#btnStationPrev:disabled,QPushButton#btnStationNext:disabled{color:#5a6b85;border-color:#1e2d45;}"
+        "QPushButton#btnStationPrev,QPushButton#btnStationNext{background-color:#ffffff;"
+        "color:#1a2332;border:1px solid #d9dee5;border-radius:6px;padding:5px 16px;}"
+        "QPushButton#btnStationPrev:hover:enabled,QPushButton#btnStationNext:hover:enabled{border:1px solid #2b7bff;color:#2b7bff;}"
+        "QPushButton#btnStationPrev:disabled,QPushButton#btnStationNext:disabled{color:#8a9aa8;border-color:#e8ecf0;}"
         /* 页码信息 */
-        "QLabel#stationPageLabel{color:#8b9bb4;font-size:13px;}"));
+        "QLabel#stationPageLabel{color:#4a5a6e;font-size:13px;}"));
 
     auto *rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(20, 16, 20, 12);
@@ -140,10 +141,11 @@ void StationManagementWidget::buildUi()
 
     m_statusCombo = new QComboBox(toolbar);
     m_statusCombo->setObjectName(QStringLiteral("stationStatusCombo"));
-    // itemData: -1=全部(不携带 status 参数), 1=正常运营, 2=维护中
+    // itemData: -1=全部(不携带 status 参数), 1=正常运营/营业中, 2=暂停营业/下线
     m_statusCombo->addItem(QStringLiteral("全部"), -1);
     m_statusCombo->addItem(QStringLiteral("正常运营"), 1);
-    m_statusCombo->addItem(QStringLiteral("维护中"), 2);
+    m_statusCombo->addItem(QStringLiteral("暂停营业"), 2);
+    // 后端新接口 GET /api/v1/stations/inquire 已支持 status 参数，恢复筛选下拉显示
 
     m_btnQuery = new QPushButton(QStringLiteral("查询"), toolbar);
     m_btnQuery->setObjectName(QStringLiteral("btnStationQuery"));
@@ -177,6 +179,10 @@ void StationManagementWidget::buildUi()
     m_tableView->horizontalHeader()->setSectionResizeMode(
         StationManagementModel::ActionCol, QHeaderView::Fixed);
     m_tableView->setColumnWidth(StationManagementModel::ActionCol, 170);
+    // 经纬度列固定宽度（"116.391234, 39.907865" 约 18 字符，200px 可完整显示）
+    m_tableView->horizontalHeader()->setSectionResizeMode(
+        StationManagementModel::LngLatCol, QHeaderView::Fixed);
+    m_tableView->setColumnWidth(StationManagementModel::LngLatCol, 200);
     rootLayout->addWidget(m_tableView, 1);
 
     // ---------------- 底部分页栏 ----------------
@@ -377,16 +383,20 @@ void StationManagementWidget::showAddStationDialog()
     QDialog dlg(this);
     dlg.setWindowTitle(tr("新增电站（本地模拟）"));
     dlg.setMinimumWidth(420);
-    // 深色科技风弹窗样式
+    // 轻量专业风弹窗样式
     dlg.setStyleSheet(QStringLiteral(
-        "QDialog{background-color:#0f1b2d;}"
-        "QLabel{color:#b8c2d1;background:transparent;}"
-        "QLineEdit{background-color:#0a1424;color:#e6e9ef;"
-        "border:1px solid #2a3b55;border-radius:4px;padding:6px 10px;}"
-        "QLineEdit:focus{border:1px solid #00d4ff;}"
-        "QPushButton{background-color:#1a2740;color:#b8c2d1;"
-        "border:1px solid #2a3b55;border-radius:4px;padding:6px 18px;min-width:72px;}"
-        "QPushButton:hover{border:1px solid #00d4ff;color:#ffffff;}"));
+        "QDialog{background-color:#ffffff;}"
+        "QLabel{color:#1a2332;background:transparent;}"
+        "QLineEdit{background-color:#ffffff;color:#1a2332;"
+        "border:1px solid #d9dee5;border-radius:6px;padding:6px 10px;}"
+        "QLineEdit:focus{border:1px solid #2b7bff;}"
+        "QSpinBox{background-color:#ffffff;color:#1a2332;"
+        "border:1px solid #d9dee5;border-radius:6px;padding:6px 10px;}"
+        "QSpinBox:focus{border:1px solid #2b7bff;}"
+        "QSpinBox::up-button,QSpinBox::down-button{width:18px;border:none;}"
+        "QPushButton{background-color:#ffffff;color:#1a2332;"
+        "border:1px solid #d9dee5;border-radius:6px;padding:6px 18px;min-width:72px;}"
+        "QPushButton:hover{border:1px solid #2b7bff;color:#2b7bff;}"));
 
     auto *form = new QFormLayout(&dlg);
     form->setContentsMargins(20, 20, 20, 20);
@@ -400,11 +410,17 @@ void StationManagementWidget::showAddStationDialog()
     latEdit->setPlaceholderText(tr("可选，如：22.5431"));
     auto *lonEdit = new QLineEdit(&dlg);
     lonEdit->setPlaceholderText(tr("可选，如：113.9527"));
+    // 电桩数量：QSpinBox 限制只能输入非负整数，默认 0
+    auto *pileCountSpin = new QSpinBox(&dlg);
+    pileCountSpin->setRange(0, 9999);
+    pileCountSpin->setValue(0);
+    pileCountSpin->setSuffix(tr(" 个"));
 
     form->addRow(tr("站名："), nameEdit);
     form->addRow(tr("地址："), addrEdit);
     form->addRow(tr("纬度："), latEdit);
     form->addRow(tr("经度："), lonEdit);
+    form->addRow(tr("电桩数量："), pileCountSpin);
     form->addRow(new QLabel(tr("注：其余字段使用默认值，仅保存于本地内存，程序退出后自动清除。"), &dlg));
 
     auto *btnBox = new QDialogButtonBox(
@@ -414,22 +430,26 @@ void StationManagementWidget::showAddStationDialog()
     form->addRow(btnBox);
 
     // 校验：站名/地址必填，通过后才关闭对话框
-    connect(btnBox, &QDialogButtonBox::accepted, &dlg, [&dlg, nameEdit, addrEdit, latEdit, lonEdit, this]() {
+    connect(btnBox, &QDialogButtonBox::accepted, &dlg, [&dlg, nameEdit, addrEdit, latEdit, lonEdit, pileCountSpin, this]() {
         const QString name = nameEdit->text().trimmed();
         const QString addr = addrEdit->text().trimmed();
         if (name.isEmpty() || addr.isEmpty()) {
             QMessageBox::warning(&dlg, tr("输入不完整"), tr("站名与地址为必填项，请补充后再确认。"));
             return;
         }
+        // 经纬度：不填或格式非法时默认 0.000000
         bool latOk = true, lonOk = true;
         const double lat = latEdit->text().trimmed().toDouble(&latOk);
         const double lon = lonEdit->text().trimmed().toDouble(&lonOk);
+        // 电桩数量：QSpinBox 仅接受整数，不填保持默认 0
+        const int pileCount = pileCountSpin->value();
 
         StationManagementModel::StationInfo info;
         info.station_name = name;
         info.address = addr;
         info.latitude = latOk ? lat : 0.0;
         info.longitude = lonOk ? lon : 0.0;
+        info.total_piles = pileCount;
         m_model->addMockStation(info); // 其余字段由 Model 填充默认值并分配负数 ID
 
         QMessageBox::information(&dlg, tr("操作成功"),
@@ -470,20 +490,20 @@ void StationManagementWidget::showSalesDetail(int stationId, const QString &stat
                             .arg(stationId));
     dlg->setModal(true);
     dlg->setMinimumSize(680, 460);
-    // 深色科技风弹窗样式（QTabWidget + QTableWidget）
+    // 轻量专业风弹窗样式（QTabWidget + QTableWidget）
     dlg->setStyleSheet(QStringLiteral(
-        "QDialog{background-color:#0f1b2d;}"
-        "QTabWidget::pane{border:1px solid #1e2d45;background-color:#0f1b2d;border-radius:6px;}"
-        "QTabBar::tab{background-color:#162238;color:#8b9bb4;padding:8px 24px;"
-        "border:1px solid #1e2d45;border-bottom:none;border-top-left-radius:6px;border-top-right-radius:6px;}"
-        "QTabBar::tab:selected{color:#00d4ff;border-bottom:2px solid #00d4ff;}"
-        "QTableWidget{background-color:#0f1b2d;alternate-background-color:#12203a;"
-        "color:#e6e9ef;gridline-color:#1e2d45;border:none;}"
-        "QTableWidget QHeaderView::section{background-color:#162238;color:#8b9bb4;"
-        "border:none;border-bottom:1px solid #2a3b55;padding:8px;font-weight:600;}"
-        "QPushButton{background-color:#1a2740;color:#b8c2d1;"
-        "border:1px solid #2a3b55;border-radius:4px;padding:6px 18px;min-width:72px;}"
-        "QPushButton:hover{border:1px solid #00d4ff;color:#ffffff;}"));
+        "QDialog{background-color:#ffffff;}"
+        "QTabWidget::pane{border:1px solid #e8ecf0;background-color:#ffffff;border-radius:6px;}"
+        "QTabBar::tab{background-color:#f8fafc;color:#4a5a6e;padding:8px 24px;"
+        "border:1px solid #e8ecf0;border-bottom:none;border-top-left-radius:6px;border-top-right-radius:6px;}"
+        "QTabBar::tab:selected{background-color:#ffffff;color:#1a5cff;border-bottom:2px solid #2b7bff;}"
+        "QTableWidget{background-color:#ffffff;alternate-background-color:#f8fafc;"
+        "color:#1a2332;gridline-color:#eef1f5;border:none;}"
+        "QTableWidget QHeaderView::section{background-color:#f8fafc;color:#4a5a6e;"
+        "border:none;border-bottom:1px solid #e8ecf0;padding:8px;font-weight:600;}"
+        "QPushButton{background-color:#ffffff;color:#1a2332;"
+        "border:1px solid #d9dee5;border-radius:6px;padding:6px 18px;min-width:72px;}"
+        "QPushButton:hover{border:1px solid #2b7bff;color:#2b7bff;}"));
 
     auto *lay = new QVBoxLayout(dlg);
     lay->setContentsMargins(16, 16, 16, 16);
@@ -514,7 +534,8 @@ void StationManagementWidget::showSalesDetail(int stationId, const QString &stat
     connect(m_detailTabs, &QTabWidget::currentChanged, dlg, [this](int index) {
         if (index == 3) { // "电桩列表" Tab
             if (!m_pileListLoaded) {
-                m_pileListModel->fetchPiles(1, 100, m_detailStationId);
+                // 新接口 page_size 上限为 30；单站最多 30 根桩，一页即可显示完，暂不分页
+                m_pileListModel->fetchPiles(1, 30, m_detailStationId);
             }
             return;
         }

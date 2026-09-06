@@ -160,8 +160,8 @@ void UserManagementModel::populateUsers(const QJsonArray &users)
         QStandardItem *stItem = new QStandardItem(
             frozen ? tr("冻结") : tr("正常"));
         stItem->setTextAlignment(Qt::AlignCenter);
-        stItem->setForeground(frozen ? QColor(0xff, 0x6b, 0x6b)
-                                     : QColor(0x2e, 0xcc, 0x71));
+        stItem->setForeground(frozen ? QColor(0xdc, 0x26, 0x26)
+                                     : QColor(0x16, 0xa3, 0x4a));
         stItem->setData(status, StatusRole);
         // 注册时间列
         QStandardItem *timeItem = new QStandardItem(createdText);
