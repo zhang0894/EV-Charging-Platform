@@ -1,4 +1,5 @@
 #include "seed_data.hpp"
+#include "schema_migrator.hpp"
 #include "../common/types.hpp"
 #include <iostream>
 #include <fstream>
@@ -130,7 +131,7 @@ bool SeedDataGenerator::clear_database() {
     }
     std::cout << "[Seed] Truncating all business tables and resetting sequences...\n";
     PgResultGuard res(conn->exec(
-        "TRUNCATE TABLE user_avatars, charging_orders, wallet_transaction_flows, piles, user_wallets, stations, users "
+        "TRUNCATE TABLE pile_reservations, user_avatars, charging_orders, wallet_transaction_flows, piles, user_wallets, stations, users "
         "RESTART IDENTITY CASCADE;"
     ));
     if (!res.is_ok()) {
@@ -342,6 +343,12 @@ bool SeedDataGenerator::import_from_json(const std::string& data_dir) {
 }
 
 bool SeedDataGenerator::populate_if_empty(const std::string& data_dir) {
+    // 确保数据表结构完整
+    if (!SchemaMigrator::ensure_schema()) {
+        std::cerr << "[Seed Error] Failed to verify or migrate database schema\n";
+        return false;
+    }
+
     auto conn = DbPool::instance().acquire();
     if (!conn) {
         std::cerr << "[Seed Error] Cannot acquire connection from DbPool\n";

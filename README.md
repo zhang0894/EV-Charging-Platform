@@ -44,6 +44,7 @@ server/
 │   ├── schema.sql                      # DDL 建表脚本 (用户表、钱包表、流水表、电站表、电桩表、订单表、预约表 pile_reservations)
 │   ├── db_pool.hpp / .cpp              # 读写分离双池动态扩容连接池 (基于 libpq，主库写池+只读副本读池，支持预编译语句 Prepared Statements 与事务隔离)
 │   ├── db_repository.hpp / .cpp        # 业务仓储持久层 (预编译查询、热点微缓存、行级排他锁资金扣划、充电桩预约流水与超时结算、幂等入账、退款审计)
+│   ├── schema_migrator.hpp             # 数据库模式自检与自动迁移器 (启动时自检所有核心表与外键完整性，自动检测并补全缺失关系表与索引)
 │   ├── async_flow_persister.hpp        # 环形双缓冲异步批量流水持久化引擎 (Batch Flush，高频财务流水与主业务解耦)
 │   └── seed_data.hpp / .cpp            # 业务初始数据导入与检测器 (支持从 data/*.json 高效批量入库与一键清空重置)
 ├── memory/                             # 进程内高性能内存池与空间几何索引 (L1 级存储)

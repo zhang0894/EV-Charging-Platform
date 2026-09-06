@@ -2,6 +2,7 @@
 #include "db/db_pool.hpp"
 #include "db/db_repository.hpp"
 #include "db/seed_data.hpp"
+#include "db/schema_migrator.hpp"
 #include "memory/rtree_index.hpp"
 #include "memory/state_pool.hpp"
 #include "simulation/simulator.hpp"
@@ -55,6 +56,13 @@ int main(int argc, char* argv[]) {
     ev::DbPool::instance().init(db_conninfo, db_read_conninfo, 8, 32);
     if (!ev::DbPool::instance().is_initialized()) {
         std::cerr << ">>> [FATAL] 数据库连接失败，服务端终止启动。请检查 PostgreSQL 服务是否已启动并验证连接配置。\n" << std::flush;
+        return 1;
+    }
+
+    // 1.1 自动自检数据库完整性并补齐缺失数据表与索引
+    std::println(">>> 1.1 正在自检数据库表结构完整性与关系约束...");
+    if (!ev::SchemaMigrator::ensure_schema()) {
+        std::cerr << ">>> [FATAL] 数据库表结构自检与迁移失败，服务端终止启动。\n" << std::flush;
         return 1;
     }
 

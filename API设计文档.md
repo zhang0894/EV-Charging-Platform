@@ -614,7 +614,7 @@
 ### 2.3 充电站与充电桩综合查询 (全平台统一接口规范)
 
 > **接口精简与架构重构说明**：  
-> 1. **充电站查询统一**：原有的 `GET /api/v1/stations/nearby`（附近粗筛）、`GET /api/v1/stations/district`（行政区查询）以及 `GET /api/v1/admin/stations`（管理端电站列表）三个接口已全量废弃并删除，合并升级为统一且高效的 **`GET /api/v1/stations/inquire`**。单站信息由 **`GET /api/v1/stations/{station_id}`** 提供，其返回格式与 `inquire` 严格对齐，彻底移除了冗余的桩位数组。  
+> 1. **充电站查询统一**：原有的 `GET /api/v1/stations/nearby`（附近粗筛）、`GET /api/v1/stations/district`（行政区查询）以及 `GET /api/v1/admin/stations`（管理端电站列表）三个接口已全量废弃并删除，合并升级为统一且高效的 **`GET /api/v1/stations/inquire`**。单站信息由 **`GET /api/v1/stations/{station_id}`** 提供，其返回格式与 `inquire` 严格对齐，移除了冗余的桩位数组。  
 > 2. **充电桩查询统一**：原有的 `GET /api/v1/admin/piles`（管理端桩查询）接口已废弃并删除，合并升级为用户端与管理端统一通用的 **`GET /api/v1/piles`** 接口。该接口支持按电站 ID、快慢充类型、全量 8 种实时桩状态多维筛选，并与内存实时遥测状态池和预约锁闭状态 100% 动态同步。  
 > 
 > 平台服务端标准化查询接口如下：
@@ -710,7 +710,8 @@
 
 ---
 
-#### 2. 查询指定充电站详情 (已移除冗余桩位列表，返回格式与 inquire 严格对齐)
+#### 2. 查询指定充电站详情
+
 - **接口路径**：`GET /api/v1/stations/{station_id}`
 - **认证方式**：公开接口 / `Bearer <token>` 均可
 - **路径参数**：
@@ -719,7 +720,7 @@
   - `latitude` (可选, 浮点数): 用户当前纬度，用于动态计算用户与该电站的距离 `distance_km`
   - `longitude` (可选, 浮点数): 用户当前经度，用于动态计算用户与该电站的距离 `distance_km`
 - **业务逻辑与模型规范**：
-  - **返回值严格对齐电站卡片结构**：彻底剥离多余且沉重的全部桩位数组（`piles`）、电站客服座机（`contact_phone`）、营业时间（`operating_hours`）、超时宽限期（`overtime_grace_minutes`），数据格式与 `inquire` 返回列表中每座电站的格式保持 100% 相同；
+  - **返回值严格对齐电站卡片结构**：彻底剥离全部桩位数组（`piles`）、电站客服座机（`contact_phone`）、营业时间（`operating_hours`）、超时宽限期（`overtime_grace_minutes`），数据格式与 `inquire` 返回列表中每座电站的格式保持 100% 相同；
   - **差异化电价返回**：返回保存在数据库中的该站点独立基础电价 `price_per_kwh`（`1.15 ~ 1.85` 元/度区间）；
   - **实时可用数动态聚合**：返回该电站最新可用快充、慢充总数及在线运营状态。
 - **成功响应 (`200 OK`)**：
