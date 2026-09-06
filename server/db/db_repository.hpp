@@ -55,7 +55,7 @@ public:
     Result<std::vector<PileModel>> get_all_piles();
     Result<std::vector<PileModel>> get_piles_by_station(int64_t station_id);
     Result<PileModel> get_pile_by_id(std::string_view pile_id);
-    Result<PileAdminListResponseData> get_piles_admin_paged(int page, int page_size, int64_t station_id_filter = 0, std::string_view status_filter = "", std::string_view type_filter = "");
+    Result<PileListResponseData> get_piles_paged(int page, int page_size, int64_t station_id_filter = 0, std::string_view status_filter = "", std::string_view type_filter = "");
     Result<void> create_pile(const CreatePileRequest& req);
     Result<void> update_pile_status(std::string_view pile_id, std::string_view status);
     Result<void> update_pile_metrics(std::string_view pile_id, int64_t add_count, double add_hours);

@@ -129,23 +129,50 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
     }
 
     // ==========================================
-    // 2. 充电站附近与详情接口 (公开或带鉴权)
+    // 2. 充电站综合查询与详情接口
     // ==========================================
-    if (path == "/api/v1/stations/nearby" && method == http::verb::get) {
-        double lat = query.contains("latitude") ? std::stod(query["latitude"]) : 39.9042;
-        double lng = query.contains("longitude") ? std::stod(query["longitude"]) : 116.4074;
-        double radius = query.contains("radius_km") ? std::stod(query["radius_km"]) : 2.0;
-        size_t limit = query.contains("limit") ? std::stoul(query["limit"]) : 20;
-        return StationController::handle_get_nearby_stations(lat, lng, radius, limit);
-    }
+    if (path == "/api/v1/stations/inquire" && method == http::verb::get) {
+        auto claims = get_auth_claims();
+        if (!claims) return make_error_response(claims.error());
 
-    if (path == "/api/v1/stations/district" && method == http::verb::get) {
+        std::string name = query.contains("name") ? query["name"] : "";
         std::string district = query.contains("district") ? query["district"] : "";
-        double lat = query.contains("latitude") ? std::stod(query["latitude"]) : 0.0;
-        double lng = query.contains("longitude") ? std::stod(query["longitude"]) : 0.0;
-        int page = query.contains("page") ? std::stoi(query["page"]) : 1;
-        int page_size = query.contains("page_size") ? std::stoi(query["page_size"]) : 20;
-        return StationController::handle_get_stations_by_district(district, lat, lng, page, page_size);
+        std::optional<double> lat_opt;
+        std::optional<double> lon_opt;
+
+        bool has_lat = query.contains("latitude");
+        bool has_lon = query.contains("longitude");
+        if (has_lat != has_lon) {
+            return make_error_response(AppError::InvalidParameters, "Latitude and longitude must both be provided");
+        }
+        if (has_lat && has_lon) {
+            try {
+                lat_opt = std::stod(query["latitude"]);
+                lon_opt = std::stod(query["longitude"]);
+            } catch (...) {
+                return make_error_response(AppError::InvalidParameters, "Invalid latitude or longitude format");
+            }
+        }
+
+        int page = 1;
+        if (query.contains("page")) {
+            try {
+                page = std::stoi(query["page"]);
+            } catch (...) {
+                page = 1;
+            }
+        }
+
+        int page_size = 20;
+        if (query.contains("page_size")) {
+            try {
+                page_size = std::stoi(query["page_size"]);
+            } catch (...) {
+                page_size = 20;
+            }
+        }
+
+        return StationController::handle_inquire_stations(name, district, lat_opt, lon_opt, page, page_size);
     }
 
     // 正则路径匹配: /api/v1/stations/{station_id}
@@ -155,9 +182,51 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
 
     if (method == http::verb::get && std::regex_match(path_str.c_str(), match, station_detail_regex)) {
         int64_t sid = std::stoll(match[1].str());
-        double lat = query.contains("latitude") ? std::stod(query["latitude"]) : 0.0;
-        double lng = query.contains("longitude") ? std::stod(query["longitude"]) : 0.0;
+        double lat = 0.0;
+        double lng = 0.0;
+        try {
+            if (query.contains("latitude")) lat = std::stod(query["latitude"]);
+            if (query.contains("longitude")) lng = std::stod(query["longitude"]);
+        } catch (...) {}
         return StationController::handle_get_station_detail(sid, lat, lng);
+    }
+
+    // 充电桩综合查询接口 (需要 Token 鉴权，支持用户和管理员调用)
+    if (path == "/api/v1/piles" && method == http::verb::get) {
+        auto claims = get_auth_claims();
+        if (!claims) return make_error_response(claims.error());
+
+        int page = 1;
+        if (query.contains("page")) {
+            try {
+                page = std::stoi(query["page"]);
+            } catch (...) {
+                page = 1;
+            }
+        }
+
+        int page_size = 30;
+        if (query.contains("page_size")) {
+            try {
+                page_size = std::stoi(query["page_size"]);
+            } catch (...) {
+                page_size = 30;
+            }
+        }
+
+        int64_t sid = 0;
+        if (query.contains("station_id")) {
+            try {
+                sid = std::stoll(query["station_id"]);
+            } catch (...) {
+                sid = 0;
+            }
+        }
+
+        std::string st = query.contains("status") ? query["status"] : "";
+        std::string type = query.contains("type") ? query["type"] : "";
+
+        return StationController::handle_get_piles(page, page_size, sid, st, type);
     }
 
     // ==========================================
@@ -262,16 +331,6 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
             return AdminController::handle_get_pile_status_overview();
         }
 
-        // 电站管理
-        if (path == "/api/v1/admin/stations") {
-            if (method == http::verb::get) {
-                int page = query.contains("page") ? std::stoi(query["page"]) : 1;
-                int page_size = query.contains("page_size") ? std::stoi(query["page_size"]) : 10;
-                std::string name = query.contains("station_name") ? query["station_name"] : "";
-                int st = query.contains("status") ? std::stoi(query["status"]) : 0;
-                return AdminController::handle_get_stations(page, page_size, name, st);
-            }
-        }
 
         // 单站销售统计: /api/v1/admin/stations/{station_id}/sales-stats
         static const std::regex station_sales_regex(R"(^/api/v1/admin/stations/(\d+)/sales-stats$)");
@@ -295,19 +354,9 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
             return AdminController::handle_offline_station(sid);
         }
 
-        // 充电桩管理
-        if (path == "/api/v1/admin/piles") {
-            if (method == http::verb::get) {
-                int page = query.contains("page") ? std::stoi(query["page"]) : 1;
-                int page_size = query.contains("page_size") ? std::stoi(query["page_size"]) : 10;
-                int64_t sid = query.contains("station_id") ? std::stoll(query["station_id"]) : 0;
-                std::string st = query.contains("status") ? query["status"] : "";
-                std::string type = query.contains("type") ? query["type"] : "";
-                return AdminController::handle_get_piles(page, page_size, sid, st, type);
-            }
-            if (method == http::verb::post) {
-                return AdminController::handle_create_pile(req);
-            }
+        // 充电桩创建 (管理员)
+        if (path == "/api/v1/admin/piles" && method == http::verb::post) {
+            return AdminController::handle_create_pile(req);
         }
 
         // 充电桩远程重启: /api/v1/admin/piles/{pile_id}/restart

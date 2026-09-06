@@ -1045,7 +1045,7 @@ Result<PileModel> DbRepository::get_pile_by_id(std::string_view pile_id) {
     };
 }
 
-Result<PileAdminListResponseData> DbRepository::get_piles_admin_paged(
+Result<PileListResponseData> DbRepository::get_piles_paged(
     int page,
     int page_size,
     int64_t station_id_filter,
@@ -1055,16 +1055,91 @@ Result<PileAdminListResponseData> DbRepository::get_piles_admin_paged(
     auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
+    std::string norm_status = normalize_pile_status(status_filter);
+    std::string norm_type = normalize_pile_type(type_filter);
+
+    // Case 1: station_id_filter > 0 (查询指定电站的全部充电桩)
+    // 每个电站最多 30 根桩，在内存中完成全量实时状态与状态池 (ChargingStatePool) 对齐及精确过滤
+    if (station_id_filter > 0) {
+        std::string sql = std::format(
+            "SELECT p.pile_id, p.station_id, s.station_name, p.pile_name, p.type, p.max_power_kw, p.status, p.total_charge_count, p.total_charge_hours, p.last_heartbeat_at "
+            "FROM piles p LEFT JOIN stations s ON p.station_id = s.station_id "
+            "WHERE p.station_id = {} ORDER BY p.pile_id ASC;",
+            station_id_filter
+        );
+        PgResultGuard res(conn->exec(sql.c_str()));
+        if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
+
+        std::vector<PileAdminItemDTO> matched_piles;
+        matched_piles.reserve(res.rows());
+
+        for (int i = 0; i < res.rows(); ++i) {
+            std::string pid = res.value(i, 0);
+            std::string ptype = res.value(i, 4);
+            std::string st = res.value(i, 6);
+
+            // 1. 优先从内存状态池获取该桩最新运行时状态（含预约锁定 RESERVED、动态模拟 CHARGING 等）
+            auto p_pool = ChargingStatePool::instance().get_pile_state(pid);
+            if (p_pool) {
+                st = p_pool->status;
+                ptype = p_pool->type;
+            }
+
+            // 2. 状态过滤 (若指定了 status)
+            if (!norm_status.empty() && st != norm_status) {
+                continue;
+            }
+
+            // 3. 类型过滤 (若指定了 type: FAST / SLOW)
+            if (!norm_type.empty() && ptype != norm_type) {
+                continue;
+            }
+
+            int st_code = pile_status_to_code(st);
+
+            matched_piles.push_back(PileAdminItemDTO{
+                .pile_id = pid,
+                .station_id = std::stoll(res.value(i, 1)),
+                .station_name = res.value(i, 2),
+                .pile_name = res.value(i, 3),
+                .type = ptype,
+                .power_kw = std::stod(res.value(i, 5)),
+                .current_status = st,
+                .current_status_code = st_code,
+                .status = st,
+                .status_code = st_code,
+                .status_desc = std::string(pile_status_to_desc(st)),
+                .total_charge_count = std::stoll(res.value(i, 7)),
+                .total_charge_hours = std::stod(res.value(i, 8)),
+                .last_heartbeat_at = std::stoll(res.value(i, 9))
+            });
+        }
+
+        int64_t total = matched_piles.size();
+        int offset = (page - 1) * page_size;
+
+        PileListResponseData data;
+        data.total = total;
+        data.page = page;
+        data.page_size = page_size;
+
+        if (offset < total) {
+            int end_idx = std::min<int>(offset + page_size, total);
+            for (int i = offset; i < end_idx; ++i) {
+                data.piles.push_back(std::move(matched_piles[i]));
+            }
+        }
+        return data;
+    }
+
+    // Case 2: station_id 未指定 (全网电桩分页，按 pile_id 递增顺序排列)
     int offset = (page - 1) * page_size;
     std::string where = "WHERE 1=1";
-    if (station_id_filter > 0) {
-        where += std::format(" AND p.station_id = {}", station_id_filter);
+    if (!norm_status.empty()) {
+        where += std::format(" AND p.status = '{}'", norm_status);
     }
-    if (!status_filter.empty()) {
-        where += std::format(" AND p.status = '{}'", status_filter);
-    }
-    if (!type_filter.empty()) {
-        where += std::format(" AND p.type = '{}'", type_filter);
+    if (!norm_type.empty()) {
+        where += std::format(" AND p.type = '{}'", norm_type);
     }
 
     std::string count_sql = std::format("SELECT COUNT(*) FROM piles p {};", where);
@@ -1081,7 +1156,7 @@ Result<PileAdminListResponseData> DbRepository::get_piles_admin_paged(
     PgResultGuard res(conn->exec(sql.c_str()));
     if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
 
-    PileAdminListResponseData data;
+    PileListResponseData data;
     data.total = total;
     data.page = page;
     data.page_size = page_size;
@@ -1089,11 +1164,13 @@ Result<PileAdminListResponseData> DbRepository::get_piles_admin_paged(
     for (int i = 0; i < res.rows(); ++i) {
         std::string pid = res.value(i, 0);
         std::string st = res.value(i, 6);
+        std::string ptype = res.value(i, 4);
 
         // 优先使用内存状态池中的最新运行时状态
         auto p_pool = ChargingStatePool::instance().get_pile_state(pid);
         if (p_pool) {
             st = p_pool->status;
+            ptype = p_pool->type;
         }
 
         int st_code = pile_status_to_code(st);
@@ -1103,7 +1180,7 @@ Result<PileAdminListResponseData> DbRepository::get_piles_admin_paged(
             .station_id = std::stoll(res.value(i, 1)),
             .station_name = res.value(i, 2),
             .pile_name = res.value(i, 3),
-            .type = res.value(i, 4),
+            .type = ptype,
             .power_kw = std::stod(res.value(i, 5)),
             .current_status = st,
             .current_status_code = st_code,

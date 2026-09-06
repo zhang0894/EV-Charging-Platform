@@ -76,83 +76,6 @@ public:
     // 2. 充电站管理
     // ==========================================
 
-    static http::response<http::string_body> handle_get_stations(
-        int page,
-        int page_size,
-        std::string_view name_filter,
-        int status_filter
-    ) {
-        if (page < 1) page = 1;
-        if (page_size < 1) page_size = 10;
-        if (page_size > 100) page_size = 100;
-
-        std::vector<int32_t> matched_ids;
-        matched_ids.reserve(STATIC_STATION_COUNT);
-
-        for (const auto& s : STATIC_STATIONS) {
-            bool is_on = StationStatusManager::instance().is_online(s.station_id);
-            int st_status = is_on ? 1 : 2;
-
-            if (status_filter > 0 && st_status != status_filter) {
-                continue;
-            }
-
-            if (!name_filter.empty()) {
-                std::string_view sname = s.name;
-                std::string_view saddr = s.address;
-                if (sname.find(name_filter) == std::string_view::npos && saddr.find(name_filter) == std::string_view::npos) {
-                    continue;
-                }
-            }
-
-            matched_ids.push_back(s.station_id);
-        }
-
-        int64_t total = matched_ids.size();
-        int64_t start_idx = static_cast<int64_t>(page - 1) * page_size;
-
-        StationAdminListResponseData resp{
-            .total = total,
-            .page = page,
-            .page_size = page_size,
-            .stations = {}
-        };
-
-        if (start_idx < total) {
-            int64_t end_idx = std::min(start_idx + page_size, total);
-            resp.stations.reserve(end_idx - start_idx);
-
-            for (int64_t i = start_idx; i < end_idx; ++i) {
-                int32_t sid = matched_ids[i];
-                const StaticStation* s = find_static_station(sid);
-                if (!s) continue;
-
-                auto summary = ChargingStatePool::instance().get_station_pile_summary(sid);
-                bool is_on = StationStatusManager::instance().is_online(sid);
-                double online_rate = (summary.total_piles > 0) ? (static_cast<double>(summary.total_piles - summary.fault_piles) / summary.total_piles * 100.0) : 100.0;
-
-                resp.stations.push_back(StationAdminItemDTO{
-                    .station_id = sid,
-                    .station_name = std::string(s->name),
-                    .address = std::string(s->address),
-                    .latitude = s->latitude,
-                    .longitude = s->longitude,
-                    .total_piles = summary.total_piles,
-                    .online_piles = summary.total_piles - summary.fault_piles,
-                    .idle_piles = summary.idle_piles,
-                    .online_rate = std::round(online_rate * 10.0) / 10.0,
-                    .price_per_kwh = StationPriceManager::instance().get_price(sid),
-                    .service_fee_per_kwh = 0.35,
-                    .overtime_fee_per_15min = 5.00,
-                    .status = is_on ? 1 : 2,
-                    .created_at = 1772600000000LL
-                });
-            }
-        }
-
-        return make_success_response(resp);
-    }
-
     static http::response<http::string_body> handle_online_station(int64_t station_id) {
         if (station_id < 1 || station_id > static_cast<int64_t>(STATIC_STATION_COUNT)) {
             return make_error_response(AppError::StationNotFound, "Station not found");
@@ -250,18 +173,6 @@ public:
     // ==========================================
     // 3. 充电桩管理
     // ==========================================
-
-    static http::response<http::string_body> handle_get_piles(
-        int page,
-        int page_size,
-        int64_t station_id_filter,
-        std::string_view status_filter,
-        std::string_view type_filter
-    ) {
-        auto res = DbRepository::instance().get_piles_admin_paged(page, page_size, station_id_filter, status_filter, type_filter);
-        if (!res) return make_error_response(res.error());
-        return make_success_response(*res);
-    }
 
     static http::response<http::string_body> handle_create_pile(const http::request<http::string_body>& req) {
         CreatePileRequest p_req;

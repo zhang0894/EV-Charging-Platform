@@ -611,30 +611,71 @@
 
 ---
 
-### 2.3 充电站查询与详情
+### 2.3 充电站与充电桩综合查询 (全平台统一接口规范)
 
-#### 1. 附近充电站粗筛与空间查询 (已升级：编译期常量 + 自适应半径保证≥3在线)
-- **接口路径**：`GET /api/v1/stations/nearby`
-- **认证方式**：公开接口 / `Bearer <token>` 均可
+> **接口精简与架构重构说明**：  
+> 1. **充电站查询统一**：原有的 `GET /api/v1/stations/nearby`（附近粗筛）、`GET /api/v1/stations/district`（行政区查询）以及 `GET /api/v1/admin/stations`（管理端电站列表）三个接口已全量废弃并删除，合并升级为统一且高效的 **`GET /api/v1/stations/inquire`**。单站信息由 **`GET /api/v1/stations/{station_id}`** 提供，其返回格式与 `inquire` 严格对齐，彻底移除了冗余的桩位数组。  
+> 2. **充电桩查询统一**：原有的 `GET /api/v1/admin/piles`（管理端桩查询）接口已废弃并删除，合并升级为用户端与管理端统一通用的 **`GET /api/v1/piles`** 接口。该接口支持按电站 ID、快慢充类型、全量 8 种实时桩状态多维筛选，并与内存实时遥测状态池和预约锁闭状态 100% 动态同步。  
+> 
+> 平台服务端标准化查询接口如下：
+> 1. `GET /api/v1/stations/inquire`：电站多维综合查询（名称模糊、行政区限定、经纬度距离排序、严格分页）
+> 2. `GET /api/v1/stations/{station_id}`：单站卡片信息查询（格式与 inquire 严格对齐）
+> 3. `GET /api/v1/piles`：充电桩综合分页查询（全网/单站、快慢充类型、8 种状态多格式兼容与实时同步）
+
+---
+
+#### 1. 充电站综合多维检索 (统一替代附近、行政区与管理端列表查询)
+- **接口路径**：`GET /api/v1/stations/inquire`
+- **认证方式**：`Bearer <token>` (必填，普通用户与管理员均可调用)
 - **查询参数 (Query Params)**：
-  - `latitude` (必填): 用户当前纬度 (如 `39.904200`)
-  - `longitude` (必填): 用户当前经度 (如 `116.407400`)
-  - `radius_km` (可选, 默认 `2.0`): 初始搜索半径 (千米)
-  - `limit` (可选, 默认 `20`): 最大返回数量
-- **后端架构与自适应算法**：
-  - 基于全北京市 **8,569 座真实充电站的编译期静态常量数组 (`STATIC_STATIONS`)** 与 Boost.Geometry R-Tree 2D 空间几何索引。
-  - 空间距离粗筛时不排除下线站点（几何最近的离线站点亦计入排序）；
-  - **自适应搜索半径扩展机制**：若候选站点中处于在线状态 (`is_online == true`) 的站点数量不足 3 个，系统自动将搜索半径倍增（如 2km → 4km → 8km ...）继续向外扩展，直到结果中包含至少 3 个在线充电站为止（若全平台全域在线站点总数不足 3 个则无需扩展）；
-  - 服务端微秒级聚合返回各站点的实时桩位可用数、快慢充分布及是否有快充；
-  - **各站独立持久化电价**：各充电站返回保存在数据库中的差异化电价 `price_per_kwh`（区间 `1.15 ~ 1.85` 元/度），不同充电站电价互不相同。
+  - `name` (可选, 字符串): 充电站名称模糊筛选关键字（不区分大小写，支持中英文子串匹配，如 `"特来电"`, `"中关村"`）
+  - `district` (可选, 字符串): 北京市 16 个行政区限定查询，支持行政区编码（`0` ~ `15`）或行政区全称/简称（如 `"海淀区"`, `"海淀"`, `"朝阳区"`, `"朝阳"`）
+    - 编码映射：0=东城区, 1=西城区, 2=朝阳区, 3=海淀区, 4=丰台区, 5=石景山区, 6=门头沟区, 7=房山区, 8=通州区, 9=顺义区, 10=昌平区, 11=大兴区, 12=怀柔区, 13=平谷区, 14=密云区, 15=延庆区
+  - `latitude` (可选, 浮点数): 用户当前纬度 (例如 `39.904200`)
+  - `longitude` (可选, 浮点数): 用户当前经度 (例如 `116.407400`)
+  - `page` (可选, 默认 `1`, 最小 `1`): 当前分页页码
+  - `page_size` (可选, 默认 `20`, 上限 `20`): 每页条数（**服务端强制截断上限为 20**，若传入大于 20 则按 20 返回）
+- **参数约束与校验逻辑**：
+  - **经纬度对等原则**：`latitude` 与 `longitude` 必须**同时提供或均不提供**。若仅提供其中一个，服务端直接拒绝并返回 `400 Bad Request`（业务码 `10003`，错误提示 `"Latitude and longitude must both be provided"`）。
+- **结果排序规则**：
+  - **坐标排序**：若提供了经纬度坐标，服务端自动计算球面距离 `distance_km`，并**按照距离由近到远升序排列**（近距离站点优先展现）；
+  - **默认排序**：若未提供经纬度坐标（包括 `name`、`district`、`latitude`、`longitude` 四个可选参数均未提供），服务端一律**按照电站 `station_id` / `id` 升序排列**（从 1 开始递增返回）。
+- **高性能架构设计**：
+  - 基于全北京市 8,569 座真实充电站编译期静态常量与 2D 空间几何索引，微秒级在内存中完成过滤与排序；
+  - 仅对当前分页窗口内的至多 20 个站点聚合实时桩位状态池（总桩数、空闲数、快慢充分布）与持久化差异电价，杜绝全表遍历，查询延迟稳定在微秒至毫秒级。
 - **成功响应 (`200 OK`)**：
   ```json
   {
     "code": 0,
     "msg": "success",
     "data": {
-      "total": 2,
+      "total": 841,
+      "page": 1,
+      "page_size": 20,
       "stations": [
+        {
+          "station_id": 5130,
+          "id": 5130,
+          "station_name": "开迈斯充电站(北京中关村一桥地下超充站)",
+          "district": "海淀区",
+          "district_code": 3,
+          "address": "中关村大街1号院地下停车场",
+          "latitude": 39.982000,
+          "longitude": 116.315000,
+          "distance_km": 0.18,
+          "price_per_kwh": 1.78,
+          "service_fee_per_kwh": 0.35,
+          "overtime_fee_per_15min": 5.00,
+          "total_piles": 18,
+          "pile_count": 18,
+          "idle_piles": 14,
+          "available_count": 14,
+          "fast_piles_idle": 12,
+          "slow_piles_idle": 2,
+          "has_fast_pile": true,
+          "station_status": 1,
+          "is_online": true
+        },
         {
           "station_id": 3442,
           "id": 3442,
@@ -657,106 +698,30 @@
           "has_fast_pile": true,
           "station_status": 1,
           "is_online": true
-        },
-        {
-          "station_id": 5130,
-          "id": 5130,
-          "station_name": "开迈斯充电站(北京中关村一桥地下超充站)",
-          "district": "海淀区",
-          "district_code": 3,
-          "address": "中关村大街1号院地下停车场",
-          "latitude": 39.982000,
-          "longitude": 116.315000,
-          "distance_km": 3.40,
-          "price_per_kwh": 1.78,
-          "service_fee_per_kwh": 0.35,
-          "overtime_fee_per_15min": 5.00,
-          "total_piles": 18,
-          "pile_count": 18,
-          "idle_piles": 14,
-          "available_count": 14,
-          "fast_piles_idle": 12,
-          "slow_piles_idle": 2,
-          "has_fast_pile": true,
-          "station_status": 1,
-          "is_online": true
         }
       ]
     },
     "timestamp": 1772607600000
   }
   ```
+- **异常响应**：
+  - `400 Bad Request` (`code: 10003`)：`"Latitude and longitude must both be provided"` (经纬度仅提供单边)
+  - `401 Unauthorized` (`code: 40001`)：`"Missing or invalid access token"` (未携带认证 Token)
 
 ---
 
-#### 2. 行政区充电站空间查询 (新增)
-- **接口路径**：`GET /api/v1/stations/district`
-- **认证方式**：公开接口 / `Bearer <token>` 均可
-- **查询参数 (Query Params)**：
-  - `district` (必填): 北京市 16 个行政区名称 (如 `"海淀区"`, `"朝阳区"`, `"海淀"`) 或行政区编码 (`0` ~ `15`)
-    - 编码映射：0=东城区, 1=西城区, 2=朝阳区, 3=海淀区, 4=丰台区, 5=石景山区, 6=门头沟区, 7=房山区, 8=通州区, 9=顺义区, 10=昌平区, 11=大兴区, 12=怀柔区, 13=平谷区, 14=密云区, 15=延庆区
-  - `latitude` (可选): 用户当前纬度
-  - `longitude` (可选): 用户当前经度
-  - `page` (可选, 默认 `1`): 分页页码
-  - `page_size` (可选, 默认 `20`): 每页条数 (上限 100)
-- **业务逻辑**：
-  - 检索指定行政区内的全量充电站集合；
-  - 若客户端提供 `latitude` 与 `longitude`，服务端自动基于球面大圆距离进行升序排序；若未提供则按 ID 升序排序；
-  - 允许微小误差（即翻页时若有桩位状态并发变动引起少许重复或遗漏，客户端可自行去重）；
-  - 返回字段结构与附近充电站接口完全一致。
-- **成功响应 (`200 OK`)**：
-  ```json
-  {
-    "code": 0,
-    "msg": "success",
-    "data": {
-      "total": 841,
-      "page": 1,
-      "page_size": 20,
-      "district": "海淀区",
-      "district_code": 3,
-      "stations": [
-        {
-          "station_id": 5130,
-          "id": 5130,
-          "station_name": "开迈斯充电站(北京中关村一桥地下超充站)",
-          "district": "海淀区",
-          "district_code": 3,
-          "address": "中关村大街1号院地下停车场",
-          "latitude": 39.982000,
-          "longitude": 116.315000,
-          "distance_km": 0.12,
-          "price_per_kwh": 1.78,
-          "service_fee_per_kwh": 0.35,
-          "overtime_fee_per_15min": 5.00,
-          "total_piles": 18,
-          "pile_count": 18,
-          "idle_piles": 18,
-          "available_count": 18,
-          "fast_piles_idle": 12,
-          "slow_piles_idle": 6,
-          "has_fast_pile": true,
-          "station_status": 1,
-          "is_online": true
-        }
-      ]
-    },
-    "timestamp": 1772607600000
-  }
-  ```
-
----
-
-#### 3. 查询指定充电站详情与桩位实时状态 (已统一数据模型与差异化电价)
+#### 2. 查询指定充电站详情 (已移除冗余桩位列表，返回格式与 inquire 严格对齐)
 - **接口路径**：`GET /api/v1/stations/{station_id}`
 - **认证方式**：公开接口 / `Bearer <token>` 均可
+- **路径参数**：
+  - `station_id` (必填, 整数): 电站唯一 ID (1 ~ 8569)
 - **查询参数 (Query Params)**：
-  - `latitude` (可选): 用户当前纬度 (如 `39.904200`)，用于计算距站距离 `distance_km`
-  - `longitude` (可选): 用户当前经度 (如 `116.407400`)，用于计算距站距离 `distance_km`
-- **业务逻辑与模型统一规范**：
-  - **返回结构与前置查询接口完全统一**：响应数据完整包含附近与行政区查询接口返回的所有站点卡片核心字段（`station_id`, `id`, `station_name`, `district`, `district_code`, `address`, `latitude`, `longitude`, `distance_km`, `price_per_kwh`, `service_fee_per_kwh`, `overtime_fee_per_15min`, `total_piles`, `pile_count`, `idle_piles`, `available_count`, `fast_piles_idle`, `slow_piles_idle`, `has_fast_pile`, `station_status`, `is_online`）；
-  - **站点差异化持久化电价**：返回该电站在数据库中持久化保存的独立基础电价 `price_per_kwh`（`1.15 ~ 1.85` 元/度区间），不同电站电价不同；
-  - **专属运营与桩位列表扩展**：额外附带电站专属联系电话（`contact_phone`）、营业时间（`operating_hours`）、充满后免费宽限期（`overtime_grace_minutes`），以及该站点下挂载的全部充电桩实时运行详情（`piles` 数组，包含桩 ID、名称、交直流类型、额定功率、电压范围、状态码及描述）。
+  - `latitude` (可选, 浮点数): 用户当前纬度，用于动态计算用户与该电站的距离 `distance_km`
+  - `longitude` (可选, 浮点数): 用户当前经度，用于动态计算用户与该电站的距离 `distance_km`
+- **业务逻辑与模型规范**：
+  - **返回值严格对齐电站卡片结构**：彻底剥离多余且沉重的全部桩位数组（`piles`）、电站客服座机（`contact_phone`）、营业时间（`operating_hours`）、超时宽限期（`overtime_grace_minutes`），数据格式与 `inquire` 返回列表中每座电站的格式保持 100% 相同；
+  - **差异化电价返回**：返回保存在数据库中的该站点独立基础电价 `price_per_kwh`（`1.15 ~ 1.85` 元/度区间）；
+  - **实时可用数动态聚合**：返回该电站最新可用快充、慢充总数及在线运营状态。
 - **成功响应 (`200 OK`)**：
   ```json
   {
@@ -775,7 +740,6 @@
       "price_per_kwh": 1.71,
       "service_fee_per_kwh": 0.35,
       "overtime_fee_per_15min": 5.00,
-      "overtime_grace_minutes": 15,
       "total_piles": 26,
       "pile_count": 26,
       "idle_piles": 20,
@@ -784,75 +748,76 @@
       "slow_piles_idle": 6,
       "has_fast_pile": true,
       "station_status": 1,
-      "is_online": true,
-      "contact_phone": "010-88889999",
-      "operating_hours": "00:00 - 24:00",
+      "is_online": true
+    },
+    "timestamp": 1772607600000
+  }
+  ```
+- **异常响应**：
+  - `404 Not Found` (`code: 20001`)：`"Station not found"` (电站 ID 不存在)
+
+---
+
+#### 3. 充电桩综合多维检索与实时状态查询 (全平台统一桩位接口)
+- **接口路径**：`GET /api/v1/piles`
+- **认证方式**：`Bearer <token>` (必填，普通用户与管理员均可调用)
+- **查询参数 (Query Params)**：
+  - `station_id` (可选, 整数): 指定充电站 ID。
+    - 若**不提供**：返回全平台所有充电桩列表，严格按 `pile_id ASC` 字典序递增分页返回；
+    - 若**提供**：返回该充电站所属的充电桩列表（单站充电桩生成数量为 5~30 根）。
+  - `page` (可选, 默认 `1`, 最小 `1`): 当前分页页码。
+  - `page_size` (可选, 默认 `30`, 上限 `30`): 每页条数（根据电站充电桩生成规模规则，单站最多 30 根桩，服务端强制截断上限为 30，若传入大于 30 则按 30 返回）。
+  - `status` (可选, 字符串或数字编码): 按充电桩实时状态过滤。支持系统全量 8 种状态，支持多种参数格式传入：
+    - 状态全集覆盖：
+      - `1` / `"IDLE"` / `"空闲"`：空闲可用（可直接启动充电或发起预约）
+      - `2` / `"PREPARING"` / `"准备中"`：车辆已插枪准备中
+      - `3` / `"CHARGING"` / `"充电中"`：正在充电中
+      - `4` / `"FINISHING"` / `"充电完成"`：充电结束待拔枪
+      - `5` / `"FAULT"` / `"故障"`：桩机故障停用
+      - `6` / `"MAINTENANCE"` / `"维护中"`：检修维护中
+      - `7` / `"OFFLINE"` / `"离线"`：通讯离线或电站整体下线
+      - `8` / `"RESERVED"` / `"已预约"` / `"已预约锁定"`：已被用户预约锁定
+  - `type` (可选, 字符串或数字编码): 按充电桩类型过滤。支持快充与慢充：
+    - 快充：`"FAST"`、`"快充"`、`1`
+    - 慢充：`"SLOW"`、`"慢充"`、`2`
+- **业务逻辑与实时状态同步**：
+  - **动态状态同步**：接口返回的充电桩状态与内存实时遥测状态池（`ChargingStatePool`）以及预约锁定表实时联动。若桩位被用户预约（状态变为 `RESERVED`）或进入充电（状态变为 `CHARGING`），查询结果和空闲过滤即刻精确反映最新动态，杜绝脏读。
+  - **返回格式对齐**：返回格式与原 `/api/v1/admin/piles` 保持 100% 格式对齐，兼容前端现有字段解析。
+- **成功响应 (`200 OK`)**：
+  ```json
+  {
+    "code": 0,
+    "msg": "success",
+    "data": {
+      "total": 25,
+      "page": 1,
+      "page_size": 30,
       "piles": [
         {
-          "pile_id": "P03442_01",
-          "pile_name": "特来电充电站(北京侨福芳草地购物中心站)-1号快充桩",
+          "pile_id": "P00001_01",
+          "station_id": 1,
+          "pile_name": "清华大学科技园P+R停车充电站-01号桩",
           "type": "FAST",
-          "type_desc": "直流快充",
-          "gun_type": "国标2015",
-          "max_power_kw": 120.0,
-          "voltage_range": "200V-750V",
+          "power_kw": 120.0,
           "status": "IDLE",
           "status_code": 1,
-          "status_desc": "空闲可用"
-        },
-        {
-          "pile_id": "P03442_02",
-          "pile_name": "特来电充电站(北京侨福芳草地购物中心站)-2号快充桩",
-          "type": "FAST",
-          "type_desc": "直流快充",
-          "gun_type": "国标2015",
-          "max_power_kw": 120.0,
-          "voltage_range": "200V-750V",
-          "status": "CHARGING",
-          "status_code": 3,
-          "status_desc": "充电中"
-        },
-        {
-          "pile_id": "P03442_03",
-          "pile_name": "特来电充电站(北京侨福芳草地购物中心站)-3号慢充桩",
-          "type": "SLOW",
-          "type_desc": "交流慢充",
-          "gun_type": "国标2015",
-          "max_power_kw": 7.0,
-          "voltage_range": "220V",
-          "status": "IDLE",
-          "status_code": 1,
-          "status_desc": "空闲可用"
-        },
-        {
-          "pile_id": "P03442_04",
-          "pile_name": "特来电充电站(北京侨福芳草地购物中心站)-4号快充桩",
-          "type": "FAST",
-          "type_desc": "直流快充",
-          "gun_type": "国标2015",
-          "max_power_kw": 120.0,
-          "voltage_range": "200V-750V",
-          "status": "FAULT",
-          "status_code": 5,
-          "status_desc": "设备故障"
-        },
-        {
-          "pile_id": "P03442_05",
-          "pile_name": "特来电充电站(北京侨福芳草地购物中心站)-5号快充桩",
-          "type": "FAST",
-          "type_desc": "直流快充",
-          "gun_type": "国标2015",
-          "max_power_kw": 120.0,
-          "voltage_range": "200V-750V",
-          "status": "RESERVED",
-          "status_code": 8,
-          "status_desc": "已预约锁定"
+          "status_desc": "空闲可用",
+          "current_status": "IDLE",
+          "current_status_code": 1,
+          "voltage_v": 0.0,
+          "current_a": 0.0,
+          "soc_pct": 0,
+          "total_charge_count": 0,
+          "total_charge_hours": 0.0,
+          "last_heartbeat_at": 1772607600000
         }
       ]
     },
     "timestamp": 1772607600000
   }
   ```
+- **异常响应**：
+  - `401 Unauthorized` (`code: 40001`)：`"Unauthorized: missing or invalid authentication token"` (未携带认证 Token 或已失效)
 
 ---
 
@@ -996,6 +961,7 @@
 - **接口路径**：`POST /api/v1/charging/settle`
 - **认证方式**：`Bearer <user_token>`
 - **请求参数**：
+  
   - Request Headers:
     - `Idempotency-Key: SETTLE-ORD_20260902_1001`
   - Request Body:
@@ -1124,6 +1090,7 @@
 - **接口路径**：`GET /api/v1/charging/active-reservation` (亦兼容 `GET /api/v1/charging/reservation/active`)
 - **认证方式**：`Bearer <user_token>`
 - **成功响应 (`200 OK` - 存在有效预约)**：
+  
   ```json
   {
     "code": 0,
@@ -1175,6 +1142,7 @@
   - `status` (可选): `CHARGING`, `UNSETTLED`, `COMPLETED`, `REFUNDED`
   - `sort_order` (可选, 默认 `desc`): `asc` (按时间正序), `desc` (按时间倒序)
 - **成功响应 (`200 OK`)**：
+  
   ```json
   {
     "code": 0,
@@ -1359,52 +1327,17 @@
 
 ### 3.3 充电站运维管理与单站销售分析 (上下线 & 销售统计)
 
-#### 1. 分页查询充电站列表
-- **接口路径**：`GET /api/v1/admin/stations`
-- **认证方式**：`Bearer <admin_token>`
-- **查询参数 (Query Params)**：
-  - `page` (可选, 默认 `1`)
-  - `page_size` (可选, 默认 `10`)
-  - `name` (可选): 站名模糊筛选
-  - `status` (可选): `1`-正常运营, `2`-维护中
-- **成功响应 (`200 OK`)**：
-  ```json
-  {
-    "code": 0,
-    "msg": "success",
-    "data": {
-      "total": 1,
-      "page": 1,
-      "page_size": 10,
-      "stations": [
-        {
-          "station_id": 101,
-          "station_name": "东软高新科技园超级充电站",
-          "address": "高新区软件园中路1号",
-          "latitude": 31.235000,
-          "longitude": 121.478000,
-          "total_piles": 12,
-          "online_piles": 11,
-          "idle_piles": 7,
-          "online_rate": 91.6,
-          "price_per_kwh": 1.45,
-          "service_fee_per_kwh": 0.35,
-          "overtime_fee_per_15min": 5.00,
-          "status": 1,
-          "created_at": 1769900000000
-        }
-      ]
-    },
-    "timestamp": 1772607600000
-  }
-  ```
+> **接口说明**：  
+> 原有的管理员分页查询电站接口 `GET /api/v1/admin/stations` 已废弃删除。管理员查询电站统一使用 **`GET /api/v1/stations/inquire`**（携带管理员 Token 即可完成站名模糊检索、行政区过滤、经纬度距离排序等全部功能）。  
+> 本节保留单站销售统计与电站上下线运维管控接口。
 
 ---
 
-#### 2. 查询指定充电站的当日 / 7天 / 一个月销售业绩情况
+#### 1. 查询指定充电站的当日 / 7天 / 一个月销售业绩情况
 - **接口路径**：`GET /api/v1/admin/stations/{station_id}/sales-stats`
 - **认证方式**：`Bearer <admin_token>`
 - **查询参数 (Query Params)**：
+  
   - `time_range` (必填): 可选 `today` (当日), `7d` (近7天), `30d` (近一个月/30天)
 - **成功响应 (`200 OK` - 当日销售明细示例)**：
   ```json
@@ -1477,6 +1410,7 @@
   - 自动将该电站下处于 `OFFLINE` 状态的所有充电桩恢复为 `IDLE` 空闲可用状态；
   - 返回电站最新状态。
 - **成功响应 (`200 OK`)**：
+  
   ```json
   {
     "code": 0,
@@ -1525,42 +1459,11 @@
 
 ### 3.4 充电桩监控与远程管控 (CRUD & 远程指令)
 
-#### 1. 分页查询全网充电桩列表
-- **接口路径**：`GET /api/v1/admin/piles`
-- **认证方式**：`Bearer <admin_token>`
-- **查询参数 (Query Params)**：
-  - `page` (可选, 默认 `1`)
-  - `page_size` (可选, 默认 `10`)
-  - `station_id` (可选): 按所属电站筛选
-  - `status` (可选): `IDLE`, `CHARGING`, `FAULT`, `OFFLINE`
-  - `type` (可选): `FAST`, `SLOW`
-- **成功响应 (`200 OK`)**：
-  ```json
-  {
-    "code": 0,
-    "msg": "success",
-    "data": {
-      "total": 100,
-      "page": 1,
-      "page_size": 10,
-      "piles": [
-        {
-          "pile_id": "P10101",
-          "station_id": 101,
-          "station_name": "东软高新科技园超级充电站",
-          "type": "FAST",
-          "power_kw": 180.0,
-          "current_status": "IDLE",
-          "current_status_code": 1,
-          "total_charge_count": 856,
-          "total_charge_hours": 1240.5,
-          "last_heartbeat_at": 1772607598000
-        }
-      ]
-    },
-    "timestamp": 1772607600000
-  }
-  ```
+#### 1. 分页查询全网充电桩列表 (接口已升级统一)
+> **接口变更通知**：  
+> 原有的管理端私有接口 `GET /api/v1/admin/piles` 已全面废弃并删除（调用返回 `404 Not Found`）。  
+> 充电桩查询功能已统一升级为全平台通用的 **`GET /api/v1/piles`**（详见 [2.3.3 充电桩综合多维检索与实时状态查询](#3-充电桩综合多维检索与实时状态查询-全平台统一桩位接口)）。  
+> 管理员携带管理员 Bearer Token 同样可完整调用该通用接口，支持 `station_id`、`page`、`page_size`（上限 30）、`type`、`status`（全量 8 种状态多格式映射）等筛选条件，实时同步遥测状态与预约锁定状态。
 
 ---
 
@@ -1661,6 +1564,7 @@
   - `phone` (可选): 手机号模糊匹配
   - `status` (可选): `1`-正常, `2`-已冻结
 - **成功响应 (`200 OK`)**：
+  
   ```json
   {
     "code": 0,

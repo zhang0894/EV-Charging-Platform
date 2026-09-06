@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <cctype>
+#include <algorithm>
 
 namespace ev {
 
@@ -33,28 +35,88 @@ inline std::string_view to_string(PileStatus status) {
     return "UNKNOWN";
 }
 
+inline std::string normalize_pile_status(std::string_view s) {
+    if (s.empty()) return "";
+    if (s == "1") return "IDLE";
+    if (s == "2") return "PREPARING";
+    if (s == "3") return "CHARGING";
+    if (s == "4") return "FINISHING";
+    if (s == "5") return "FAULT";
+    if (s == "6") return "MAINTENANCE";
+    if (s == "7") return "OFFLINE";
+    if (s == "8") return "RESERVED";
+
+    std::string upper;
+    upper.reserve(s.size());
+    for (char c : s) {
+        upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+    }
+
+    if (upper == "IDLE" || s == "空闲" || s == "空闲可用") return "IDLE";
+    if (upper == "PREPARING" || s == "准备中" || s == "插枪准备中") return "PREPARING";
+    if (upper == "CHARGING" || s == "充电中" || s == "充电") return "CHARGING";
+    if (upper == "FINISHING" || s == "充电完成" || s == "待拔枪" || s == "充电完成待拔枪") return "FINISHING";
+    if (upper == "FAULT" || s == "故障" || s == "设备故障") return "FAULT";
+    if (upper == "MAINTENANCE" || s == "维护" || s == "锁定维护中") return "MAINTENANCE";
+    if (upper == "OFFLINE" || s == "离线" || s == "设备离线") return "OFFLINE";
+    if (upper == "RESERVED" || s == "已预约" || s == "预约" || s == "已预约锁定") return "RESERVED";
+
+    return upper;
+}
+
+inline std::string normalize_pile_type(std::string_view s) {
+    if (s.empty()) return "";
+    if (s == "1" || s == "快充" || s == "直流快充" || s == "直流") return "FAST";
+    if (s == "2" || s == "慢充" || s == "交流慢充" || s == "交流") return "SLOW";
+
+    std::string upper;
+    upper.reserve(s.size());
+    for (char c : s) {
+        upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+    }
+    if (upper == "FAST") return "FAST";
+    if (upper == "SLOW") return "SLOW";
+    return upper;
+}
+
 inline int pile_status_to_code(std::string_view st) {
-    if (st == "IDLE") return 1;
-    if (st == "PREPARING") return 2;
-    if (st == "CHARGING") return 3;
-    if (st == "FINISHING") return 4;
-    if (st == "FAULT") return 5;
-    if (st == "MAINTENANCE") return 6;
-    if (st == "OFFLINE") return 7;
-    if (st == "RESERVED") return 8;
+    std::string norm = normalize_pile_status(st);
+    if (norm == "IDLE") return 1;
+    if (norm == "PREPARING") return 2;
+    if (norm == "CHARGING") return 3;
+    if (norm == "FINISHING") return 4;
+    if (norm == "FAULT") return 5;
+    if (norm == "MAINTENANCE") return 6;
+    if (norm == "OFFLINE") return 7;
+    if (norm == "RESERVED") return 8;
     return 1;
 }
 
 inline std::string_view pile_status_to_desc(std::string_view st) {
-    if (st == "IDLE") return "空闲可用";
-    if (st == "PREPARING") return "插枪准备中";
-    if (st == "CHARGING") return "充电中";
-    if (st == "FINISHING") return "充电完成待拔枪";
-    if (st == "FAULT") return "设备故障";
-    if (st == "MAINTENANCE") return "锁定维护中";
-    if (st == "OFFLINE") return "离线";
-    if (st == "RESERVED") return "已预约锁定";
+    std::string norm = normalize_pile_status(st);
+    if (norm == "IDLE") return "空闲可用";
+    if (norm == "PREPARING") return "插枪准备中";
+    if (norm == "CHARGING") return "充电中";
+    if (norm == "FINISHING") return "充电完成待拔枪";
+    if (norm == "FAULT") return "设备故障";
+    if (norm == "MAINTENANCE") return "锁定维护中";
+    if (norm == "OFFLINE") return "离线";
+    if (norm == "RESERVED") return "已预约锁定";
     return "空闲可用";
+}
+
+inline std::string_view pile_code_to_status(int code) {
+    switch (code) {
+        case 1: return "IDLE";
+        case 2: return "PREPARING";
+        case 3: return "CHARGING";
+        case 4: return "FINISHING";
+        case 5: return "FAULT";
+        case 6: return "MAINTENANCE";
+        case 7: return "OFFLINE";
+        case 8: return "RESERVED";
+        default: return "IDLE";
+    }
 }
 
 // 充电桩类型

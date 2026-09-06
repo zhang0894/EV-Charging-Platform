@@ -122,27 +122,8 @@ class ServerTester:
             print(f"  3. 确认服务器系统防火墙 (ufw/iptables) 已开放 8080: sudo ufw allow 8080/tcp")
             return
 
-        # 2. 公共电站空间与详情查询
-        self.log_section("2. 空间索引搜桩与电站详情接口测试")
-        status, res = self.http_request("GET", "/api/v1/stations/nearby?latitude=31.2304&longitude=121.4737&radius_km=15&limit=3")
-        if status == 200 and res.get("code") == 0 and "data" in res:
-            stations = res["data"].get("stations", [])
-            self.log_pass(f"空间搜桩成功 (/api/v1/stations/nearby)", f"匹配到 {len(stations)} 个附近电站")
-            if stations:
-                st = stations[0]
-                print(f"       - 示例电站: ID={st.get('station_id')}, 名称='{st.get('station_name')}', 距离={st.get('distance_km', 0):.2f}km, 空闲快充={st.get('fast_piles_idle')}")
-        else:
-            self.log_fail("空间搜桩失败", f"Status={status}, Resp={res}")
-
-        status, res = self.http_request("GET", "/api/v1/stations/1")
-        if status == 200 and res.get("code") == 0:
-            piles = res.get("data", {}).get("piles", [])
-            self.log_pass("获取1号电站详情 (/api/v1/stations/1)", f"下属 {len(piles)} 个充电桩")
-        else:
-            self.log_fail("获取电站详情失败", f"Status={status}, Resp={res}")
-
-        # 3. 车主认证与钱包资产
-        self.log_section("3. 车主免密登录、个人资料与钱包充值测试")
+        # 2. 车主认证与钱包资产
+        self.log_section("2. 车主免密登录、个人资料与钱包充值测试")
         test_phone = "13866668888"
         status, res = self.http_request("POST", "/api/v1/auth/login", {"phone": test_phone, "auth_type": "passwordless"})
         user_token = ""
@@ -154,6 +135,26 @@ class ServerTester:
             self.log_pass("车主免密登录/注册成功 (/api/v1/auth/login)", f"UID={user_id}, Phone={user_data.get('phone')}, Token获取成功")
         else:
             self.log_fail("车主登录失败", f"Status={status}, Resp={res}")
+
+        # 3. 电站综合查询与电站详情接口测试
+        self.log_section("3. 电站综合查询与电站详情接口测试 (/api/v1/stations/*)")
+        if user_token:
+            status, res = self.http_request("GET", "/api/v1/stations/inquire?latitude=39.9042&longitude=116.4074&page=1&page_size=3", token=user_token)
+            if status == 200 and res.get("code") == 0 and "data" in res:
+                stations = res["data"].get("stations", [])
+                self.log_pass("电站综合查询成功 (/api/v1/stations/inquire)", f"匹配到 {res['data'].get('total')} 个电站，返回 {len(stations)} 个附近电站")
+                if stations:
+                    st = stations[0]
+                    print(f"       - 示例电站: ID={st.get('station_id')}, 名称='{st.get('station_name')}', 距离={st.get('distance_km', 0):.2f}km, 空闲快充={st.get('fast_piles_idle')}")
+            else:
+                self.log_fail("电站综合查询失败", f"Status={status}, Resp={res}")
+
+        status, res = self.http_request("GET", "/api/v1/stations/1?latitude=39.9042&longitude=116.4074")
+        if status == 200 and res.get("code") == 0:
+            st = res.get("data", {})
+            self.log_pass("获取1号电站详情 (/api/v1/stations/1)", f"站名='{st.get('station_name')}', 总桩数={st.get('total_piles')}, 可用桩数={st.get('available_count')}")
+        else:
+            self.log_fail("获取电站详情失败", f"Status={status}, Resp={res}")
 
         if user_token:
             status, res = self.http_request("GET", "/api/v1/user/profile", token=user_token)

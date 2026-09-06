@@ -13,171 +13,137 @@
 #include "../cache/redis_cache.hpp"
 #include <cmath>
 #include <algorithm>
+#include <format>
 
 namespace ev {
 
 class StationController {
 public:
-    static http::response<http::string_body> handle_get_nearby_stations(
-        double latitude,
-        double longitude,
-        double radius_km = 2.0,
-        size_t limit = 20
-    ) {
-        auto nearby_results = StationRTree::instance().search_nearby_adaptive(latitude, longitude, radius_km, limit);
+    static bool fuzzy_contains_icase(std::string_view target, std::string_view query) {
+        if (query.empty()) return true;
+        if (query.size() > target.size()) return false;
 
-        StationNearbyListResponseData data;
-        data.total = nearby_results.size();
-        data.stations.reserve(nearby_results.size());
+        if (target.find(query) != std::string_view::npos) return true;
 
-        for (const auto& item : nearby_results) {
-            int32_t sid32 = static_cast<int32_t>(item.station_id);
-            const StaticStation* static_st = find_static_station(sid32);
-
-            std::string name;
-            std::string addr;
-            std::string district;
-            uint8_t district_code = 0;
-            double lat = item.latitude;
-            double lon = item.longitude;
-
-            if (static_st) {
-                name = static_st->name;
-                addr = static_st->address;
-                district_code = static_st->district_code;
-                district = std::string(get_district_name_by_code(district_code));
-            } else {
-                auto mem_st = StationRTree::instance().get_station(item.station_id);
-                if (mem_st) {
-                    name = mem_st->station_name;
-                    addr = mem_st->address;
-                } else {
-                    auto st_res = DbRepository::instance().get_station_by_id(item.station_id);
-                    if (st_res) {
-                        name = st_res->station_name;
-                        addr = st_res->address;
-                    }
-                }
+        auto it = std::search(
+            target.begin(), target.end(),
+            query.begin(), query.end(),
+            [](char ch1, char ch2) {
+                return std::tolower(static_cast<unsigned char>(ch1)) ==
+                       std::tolower(static_cast<unsigned char>(ch2));
             }
-
-            auto summary = ChargingStatePool::instance().get_station_pile_summary(item.station_id);
-            bool is_on = StationStatusManager::instance().is_online(item.station_id);
-            int st_status = is_on ? 1 : 2;
-
-            data.stations.push_back(StationNearbyCardDTO{
-                .station_id = item.station_id,
-                .id = item.station_id,
-                .station_name = name,
-                .district = district,
-                .district_code = district_code,
-                .address = addr,
-                .latitude = lat,
-                .longitude = lon,
-                .distance_km = std::round(item.distance_km * 100.0) / 100.0,
-                .price_per_kwh = StationPriceManager::instance().get_price(item.station_id),
-                .service_fee_per_kwh = 0.35,
-                .overtime_fee_per_15min = 5.00,
-                .total_piles = summary.total_piles,
-                .pile_count = summary.total_piles,
-                .idle_piles = summary.idle_piles,
-                .available_count = summary.idle_piles,
-                .fast_piles_idle = summary.fast_piles_idle,
-                .slow_piles_idle = summary.slow_piles_idle,
-                .has_fast_pile = summary.has_fast_pile,
-                .station_status = st_status,
-                .is_online = is_on
-            });
-        }
-
-        return make_success_response(data);
+        );
+        return it != target.end();
     }
 
-    static http::response<http::string_body> handle_get_stations_by_district(
+    static http::response<http::string_body> handle_inquire_stations(
+        std::string_view name_param,
         std::string_view district_param,
-        double latitude,
-        double longitude,
+        std::optional<double> lat_opt,
+        std::optional<double> lon_opt,
         int page = 1,
         int page_size = 20
     ) {
         if (page < 1) page = 1;
         if (page_size < 1) page_size = 20;
-        if (page_size > 100) page_size = 100;
+        if (page_size > 20) page_size = 20;
 
-        // 识别行政区 (支持 0~15 数字编码，或 "海淀区"/"海淀" 等名称)
-        std::optional<uint8_t> opt_code;
-        try {
-            size_t idx = 0;
-            int num = std::stoi(std::string(district_param), &idx);
-            if (idx == district_param.size() && num >= 0 && num < 16) {
-                opt_code = static_cast<uint8_t>(num);
-            }
-        } catch (...) {}
-
-        if (!opt_code) {
-            opt_code = get_district_code_by_name(district_param);
+        if (lat_opt.has_value() != lon_opt.has_value()) {
+            return make_error_response(AppError::InvalidParameters, "Latitude and longitude must both be provided");
         }
 
-        if (!opt_code) {
-            // 前缀模糊匹配，如 "朝阳" 匹配 "朝阳区"
-            for (uint8_t i = 0; i < 16; ++i) {
-                if (DISTRICT_NAMES[i].starts_with(district_param) || district_param.starts_with(DISTRICT_NAMES[i].substr(0, std::min<size_t>(6, DISTRICT_NAMES[i].size())))) {
-                    opt_code = i;
-                    break;
+        // 1. 识别行政区筛选条件 (可选)
+        std::optional<uint8_t> opt_district_code;
+        if (!district_param.empty()) {
+            try {
+                size_t idx = 0;
+                int num = std::stoi(std::string(district_param), &idx);
+                if (idx == district_param.size() && num >= 0 && num < 16) {
+                    opt_district_code = static_cast<uint8_t>(num);
+                }
+            } catch (...) {}
+
+            if (!opt_district_code) {
+                opt_district_code = get_district_code_by_name(district_param);
+            }
+
+            if (!opt_district_code) {
+                // 前缀模糊匹配，如 "朝阳" 匹配 "朝阳区"
+                for (uint8_t i = 0; i < 16; ++i) {
+                    if (DISTRICT_NAMES[i].starts_with(district_param) || district_param.starts_with(DISTRICT_NAMES[i].substr(0, std::min<size_t>(6, DISTRICT_NAMES[i].size())))) {
+                        opt_district_code = i;
+                        break;
+                    }
                 }
             }
+
+            if (!opt_district_code) {
+                return make_error_response(AppError::InvalidParameters, "Invalid district name or code");
+            }
         }
 
-        if (!opt_code) {
-            return make_error_response(AppError::InvalidJsonPayload, "Invalid district name or code");
-        }
-
-        uint8_t dcode = *opt_code;
-        std::string dname = std::string(get_district_name_by_code(dcode));
-        const auto& station_ids = StationRTree::instance().get_district_stations(dcode);
-
-        struct SorterItem {
-            int32_t station_id;
-            double distance_km;
+        struct InquireSorterItem {
+            int32_t station_id{0};
+            double distance_km{0.0};
         };
 
-        std::vector<SorterItem> items;
-        items.reserve(station_ids.size());
+        std::vector<InquireSorterItem> candidates;
 
-        bool has_coords = (latitude != 0.0 || longitude != 0.0);
+        bool has_coords = (lat_opt.has_value() && lon_opt.has_value());
+        double user_lat = has_coords ? *lat_opt : 0.0;
+        double user_lon = has_coords ? *lon_opt : 0.0;
 
-        for (int32_t sid : station_ids) {
-            const StaticStation* st = find_static_station(sid);
-            if (!st) continue;
+        auto process_station = [&](int32_t sid, const StaticStation* st) {
+            if (!st) return;
+            if (!name_param.empty() && !fuzzy_contains_icase(st->name, name_param)) {
+                return;
+            }
             double dist = 0.0;
             if (has_coords) {
-                dist = StationRTree::calculate_distance_km(latitude, longitude, st->latitude, st->longitude);
+                dist = StationRTree::calculate_distance_km(user_lat, user_lon, st->latitude, st->longitude);
             }
-            items.push_back(SorterItem{
+            candidates.push_back(InquireSorterItem{
                 .station_id = sid,
                 .distance_km = dist
             });
+        };
+
+        if (opt_district_code) {
+            const auto& district_sids = StationRTree::instance().get_district_stations(*opt_district_code);
+            candidates.reserve(district_sids.size());
+            for (int32_t sid : district_sids) {
+                process_station(sid, find_static_station(sid));
+            }
+        } else {
+            candidates.reserve(STATIC_STATION_COUNT);
+            for (const auto& s : STATIC_STATIONS) {
+                process_station(s.station_id, &s);
+            }
         }
 
-        // 若提供了坐标则按距离排序，否则按 station_id 升序
+        // 排序规则:
+        // 1. 若提供经纬度，按距离由近及远升序排序 (不要求严格排序，距离近的靠前)
+        // 2. 若未提供经纬度，按照 station_id 升序排列
         if (has_coords) {
-            std::sort(items.begin(), items.end(), [](const auto& a, const auto& b) {
-                return a.distance_km < b.distance_km;
+            std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) {
+                if (std::abs(a.distance_km - b.distance_km) > 1e-6) {
+                    return a.distance_km < b.distance_km;
+                }
+                return a.station_id < b.station_id;
             });
         } else {
-            std::sort(items.begin(), items.end(), [](const auto& a, const auto& b) {
+            std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) {
                 return a.station_id < b.station_id;
             });
         }
 
-        int64_t total = items.size();
+        int64_t total = candidates.size();
         int64_t start_idx = static_cast<int64_t>(page - 1) * page_size;
 
-        StationDistrictListResponseData resp{
+        StationInquireResponseData resp{
             .total = total,
             .page = page,
             .page_size = page_size,
-            .district = dname,
-            .district_code = dcode,
             .stations = {}
         };
 
@@ -186,24 +152,25 @@ public:
             resp.stations.reserve(end_idx - start_idx);
 
             for (int64_t i = start_idx; i < end_idx; ++i) {
-                const auto& item = items[i];
-                const StaticStation* st = find_static_station(item.station_id);
-                if (!st) continue;
+                int32_t sid = candidates[i].station_id;
+                double dist = candidates[i].distance_km;
+                const StaticStation* s = find_static_station(sid);
+                if (!s) continue;
 
-                auto summary = ChargingStatePool::instance().get_station_pile_summary(st->station_id);
-                bool is_on = StationStatusManager::instance().is_online(st->station_id);
+                auto summary = ChargingStatePool::instance().get_station_pile_summary(sid);
+                bool is_on = StationStatusManager::instance().is_online(sid);
 
                 resp.stations.push_back(StationNearbyCardDTO{
-                    .station_id = st->station_id,
-                    .id = st->station_id,
-                    .station_name = std::string(st->name),
-                    .district = dname,
-                    .district_code = dcode,
-                    .address = std::string(st->address),
-                    .latitude = st->latitude,
-                    .longitude = st->longitude,
-                    .distance_km = std::round(item.distance_km * 100.0) / 100.0,
-                    .price_per_kwh = StationPriceManager::instance().get_price(st->station_id),
+                    .station_id = sid,
+                    .id = sid,
+                    .station_name = std::string(s->name),
+                    .district = std::string(get_district_name_by_code(s->district_code)),
+                    .district_code = s->district_code,
+                    .address = std::string(s->address),
+                    .latitude = s->latitude,
+                    .longitude = s->longitude,
+                    .distance_km = has_coords ? (std::round(dist * 100.0) / 100.0) : 0.0,
+                    .price_per_kwh = StationPriceManager::instance().get_price(sid),
                     .service_fee_per_kwh = 0.35,
                     .overtime_fee_per_15min = 5.00,
                     .total_piles = summary.total_piles,
@@ -235,9 +202,6 @@ public:
         double lon = 0.0;
         double serv = 0.35;
         double overtime_fee = 5.00;
-        int grace_mins = 15;
-        std::string phone = "010-88889999";
-        std::string hours = "00:00 - 24:00";
 
         const StaticStation* static_st = find_static_station(static_cast<int32_t>(station_id));
         if (static_st) {
@@ -256,9 +220,6 @@ public:
                 lon = mem_st->longitude;
                 serv = mem_st->service_fee_per_kwh;
                 overtime_fee = mem_st->overtime_fee_per_15min;
-                grace_mins = mem_st->overtime_grace_minutes;
-                phone = mem_st->contact_phone;
-                hours = mem_st->operating_hours;
             } else {
                 std::string cache_key = std::format("cache:station:model:{}", station_id);
                 auto cached_st = RedisCache::instance().get_json<StationModel>(cache_key);
@@ -269,9 +230,6 @@ public:
                     lon = cached_st->longitude;
                     serv = cached_st->service_fee_per_kwh;
                     overtime_fee = cached_st->overtime_fee_per_15min;
-                    grace_mins = cached_st->overtime_grace_minutes;
-                    phone = cached_st->contact_phone;
-                    hours = cached_st->operating_hours;
                 } else {
                     auto st_res = DbRepository::instance().get_station_by_id(station_id);
                     if (!st_res) {
@@ -283,9 +241,6 @@ public:
                     lon = st_res->longitude;
                     serv = st_res->service_fee_per_kwh;
                     overtime_fee = st_res->overtime_fee_per_15min;
-                    grace_mins = st_res->overtime_grace_minutes;
-                    phone = st_res->contact_phone;
-                    hours = st_res->operating_hours;
                     RedisCache::instance().set_json(cache_key, *st_res, 120);
                 }
             }
@@ -297,11 +252,10 @@ public:
             dist = std::round(StationRTree::calculate_distance_km(user_lat, user_lon, lat, lon) * 100.0) / 100.0;
         }
 
-        auto pool_piles = ChargingStatePool::instance().get_piles_by_station(station_id);
         auto summary = ChargingStatePool::instance().get_station_pile_summary(station_id);
         bool is_on = StationStatusManager::instance().is_online(station_id);
 
-        StationDetailResponseData data{
+        StationNearbyCardDTO data{
             .station_id = station_id,
             .id = station_id,
             .station_name = name,
@@ -314,7 +268,6 @@ public:
             .price_per_kwh = price,
             .service_fee_per_kwh = serv,
             .overtime_fee_per_15min = overtime_fee,
-            .overtime_grace_minutes = grace_mins,
             .total_piles = summary.total_piles,
             .pile_count = summary.total_piles,
             .idle_piles = summary.idle_piles,
@@ -323,31 +276,8 @@ public:
             .slow_piles_idle = summary.slow_piles_idle,
             .has_fast_pile = summary.has_fast_pile,
             .station_status = is_on ? 1 : 2,
-            .is_online = is_on,
-            .contact_phone = phone,
-            .operating_hours = hours,
-            .piles = {}
+            .is_online = is_on
         };
-
-        for (const auto& p : pool_piles) {
-            int st_code = pile_status_to_code(p.status);
-            std::string st_desc = std::string(pile_status_to_desc(p.status));
-
-            data.piles.push_back(PileDetailDTO{
-                .pile_id = p.pile_id,
-                .pile_name = p.pile_name,
-                .type = p.type,
-                .type_desc = (p.type == "FAST" ? "直流快充" : "交流慢充"),
-                .gun_type = "国标2015",
-                .max_power_kw = p.max_power_kw,
-                .voltage_range = "200V-750V",
-                .status = p.status,
-                .status_code = st_code,
-                .status_desc = st_desc,
-                .current_status = p.status,
-                .current_status_code = st_code
-            });
-        }
 
         return make_success_response(data);
     }
@@ -365,6 +295,22 @@ public:
         }
 
         RedisCache::instance().set_json(cache_key, *res, 10); // 10s TTL
+        return make_success_response(*res);
+    }
+
+    static http::response<http::string_body> handle_get_piles(
+        int page,
+        int page_size,
+        int64_t station_id_filter,
+        std::string_view status_filter,
+        std::string_view type_filter
+    ) {
+        if (page < 1) page = 1;
+        if (page_size < 1) page_size = 30;
+        if (page_size > 30) page_size = 30;
+
+        auto res = DbRepository::instance().get_piles_paged(page, page_size, station_id_filter, status_filter, type_filter);
+        if (!res) return make_error_response(res.error());
         return make_success_response(*res);
     }
 };

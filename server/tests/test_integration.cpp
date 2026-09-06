@@ -99,10 +99,10 @@ int main() {
 
     // 4. 测试空间索引搜桩与电站详情
     std::println("\n>>> 4. 测试空间附近搜桩与电站详情 (/api/v1/stations/*)...");
-    auto nearby_req = make_req(http::verb::get, "/api/v1/stations/nearby?latitude=31.2304&longitude=121.4737&radius_km=15&limit=5");
+    auto nearby_req = make_req(http::verb::get, "/api/v1/stations/inquire?latitude=39.9042&longitude=116.4074&page=1&page_size=5", "", user_token);
     auto nearby_resp = router.dispatch(nearby_req);
     assert(nearby_resp.result() == http::status::ok);
-    std::println("  [PASS] 空间搜桩成功, 返回: {}", nearby_resp.body().substr(0, 120) + "...");
+    std::println("  [PASS] 电站综合查询成功, 返回: {}", nearby_resp.body().substr(0, 120) + "...");
 
     int64_t target_sid = 1;
     auto detail_req = make_req(http::verb::get, std::format("/api/v1/stations/{}", target_sid));
