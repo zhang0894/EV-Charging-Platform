@@ -130,7 +130,6 @@ public:
                 "    gun_type VARCHAR(32) DEFAULT '国标2015',"
                 "    max_power_kw DOUBLE PRECISION NOT NULL DEFAULT 120.0,"
                 "    voltage_range VARCHAR(32) DEFAULT '200V-750V',"
-                "    status VARCHAR(20) NOT NULL DEFAULT 'IDLE',"
                 "    total_charge_count BIGINT DEFAULT 0,"
                 "    total_charge_hours DOUBLE PRECISION DEFAULT 0.0,"
                 "    last_heartbeat_at BIGINT DEFAULT 0,"
@@ -138,7 +137,6 @@ public:
                 "    updated_at BIGINT NOT NULL"
                 ");",
                 "CREATE INDEX IF NOT EXISTS idx_piles_station_id ON piles(station_id);"
-                "CREATE INDEX IF NOT EXISTS idx_piles_status ON piles(status);"
             },
             {
                 "charging_orders",
@@ -229,6 +227,18 @@ public:
             std::cout << "[SchemaMigrator] 🎉 数据库自动迁移补全完成，共创建 " << created_tables.size() << " 张缺失数据表。\n" << std::flush;
         } else {
             std::cout << "  [OK] 数据库结构自检通过：所有 8 张核心业务表与索引均已就绪。\n" << std::flush;
+        }
+
+        // 4. 清理 piles 表中遗留的冗余 status 列与索引 (运行状态统一由内存状态池托管)
+        PgResultGuard col_chk(conn->exec(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'piles' AND column_name = 'status';"
+        ));
+        if (col_chk.is_ok() && col_chk.rows() > 0) {
+            std::cout << "[SchemaMigrator] 🧹 检测到 piles 表存在遗留冗余 status 列，正在执行平滑清理迁移...\n" << std::flush;
+            conn->exec("DROP INDEX IF EXISTS idx_piles_status;");
+            conn->exec("ALTER TABLE piles DROP COLUMN IF EXISTS status;");
+            std::cout << "[SchemaMigrator] 🧹 piles 表已成功移除 status 冗余列，充电桩状态已 100% 统一至内存状态池！\n" << std::flush;
         }
 
         return true;

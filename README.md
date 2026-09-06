@@ -1,6 +1,11 @@
 # EV-Charging-Platform
 北理工大三小学期｜东软电动汽车充电桩应用管理平台｜基于 Linux + Qt(C++) 的电动汽车充电桩管理平台，含用户端、管理后台、数据库存储、Web数据大屏与机器学习负荷预测
 
+## 核心架构与业务规范文档
+
+- **[充电站与充电桩数据存储与业务逻辑规范](./充电站与充电桩数据存储与业务逻辑规范.md)**：深入阐述 L1 内存状态池 (`ChargingStatePool`) 与 L2 PostgreSQL 数据库的分层存储模型、移除数据库 `piles.status` 彻底消除脏数据与预约锁死、充电桩 8 种标准化运行状态机、高并发原子抢占式预约生命周期与 500ms 动态仿真业务规范。
+- **[API 设计与端口规范文档](./API设计文档.md)**：全系统 RESTful API 与 WebSocket 实时流详细协议定义（含 `GET /api/v1/stations/inquire` 多维综合查询新增的 `status` 与 `fast_pile` 筛选能力）。
+
 ## 项目结构介绍 (Server 服务端 & Data Generator 数据管线)
 
 ### 1. 数据预处理与生成管线 (`data_generator/`)

@@ -451,13 +451,10 @@ public:
             return make_error_response(AppError::ActiveOrderExists, "You already have an active pile reservation");
         }
 
-        // 3. 校验充电桩是否存在及空闲
+        // 3. 校验充电桩是否存在及空闲并原子抢占锁定
         auto p_pool = ChargingStatePool::instance().get_pile_state(reserve_req.pile_id);
         if (!p_pool) {
             return make_error_response(AppError::ChargingPileNotFound, "Charging pile not found");
-        }
-        if (p_pool->status != "IDLE") {
-            return make_error_response(AppError::PileBusyOrReserved, "Charging pile is not idle");
         }
 
         int64_t st_id = p_pool->station_id;
@@ -465,23 +462,25 @@ public:
             return make_error_response(AppError::StationNotFound, "Charging station is offline");
         }
 
+        int64_t temp_expire = current_time_ms() + 120000;
+        if (!ChargingStatePool::instance().reserve_pile(reserve_req.pile_id, user_id, "PENDING", temp_expire)) {
+            return make_error_response(AppError::PileBusyOrReserved, "Charging pile is not idle or already reserved");
+        }
+
         // 4. 创建预约记录并扣减20元押金 (2000分, 120秒超时)
         auto res = DbRepository::instance().create_reservation(user_id, reserve_req.pile_id);
         if (!res) {
+            ChargingStatePool::instance().release_reserved_pile(reserve_req.pile_id);
             return make_error_response(res.error());
         }
 
-        // 5. 更新状态池中的桩为 RESERVED 锁定状态
-        bool pool_ok = ChargingStatePool::instance().reserve_pile(
+        // 5. 更新状态池中的预约单ID与真实过期时间
+        ChargingStatePool::instance().reserve_pile(
             reserve_req.pile_id,
             user_id,
             res->reservation_id,
             res->expire_at
         );
-        if (!pool_ok) {
-            DbRepository::instance().cancel_reservation(user_id, res->reservation_id);
-            return make_error_response(AppError::PileBusyOrReserved, "Pile was occupied concurrently");
-        }
 
         // 广播桩状态变更为 RESERVED (code: 8)
         int64_t now = current_time_ms();

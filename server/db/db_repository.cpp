@@ -782,12 +782,9 @@ Result<StationAdminListResponseData> DbRepository::get_stations_admin_paged(
 
     std::string sql = std::format(
         "SELECT s.station_id, s.station_name, s.address, s.latitude, s.longitude, "
-        "COUNT(p.pile_id) as total_piles, "
-        "COUNT(CASE WHEN p.status = 'IDLE' THEN 1 END) as idle_piles, "
-        "COUNT(CASE WHEN p.status != 'FAULT' AND p.status != 'OFFLINE' THEN 1 END) as online_piles, "
         "s.price_per_kwh, s.service_fee_per_kwh, s.overtime_fee_per_15min, s.status, s.created_at "
-        "FROM stations s LEFT JOIN piles p ON s.station_id = p.station_id "
-        "{} GROUP BY s.station_id ORDER BY s.station_id ASC LIMIT {} OFFSET {};",
+        "FROM stations s "
+        "{} ORDER BY s.station_id ASC LIMIT {} OFFSET {};",
         where, page_size, offset
     );
 
@@ -800,13 +797,19 @@ Result<StationAdminListResponseData> DbRepository::get_stations_admin_paged(
     data.page_size = page_size;
 
     for (int i = 0; i < res.rows(); ++i) {
-        int tot = std::stoi(res.value(i, 5));
-        int idle = std::stoi(res.value(i, 6));
-        int online = std::stoi(res.value(i, 7));
+        int64_t sid = std::stoll(res.value(i, 0));
+        auto piles = ChargingStatePool::instance().get_piles_by_station(sid);
+        int tot = static_cast<int>(piles.size());
+        int idle = 0;
+        int online = 0;
+        for (const auto& p : piles) {
+            if (p.status == "IDLE") idle++;
+            if (p.status != "FAULT" && p.status != "OFFLINE") online++;
+        }
         double rate = tot > 0 ? (static_cast<double>(online) / tot * 100.0) : 100.0;
 
         data.stations.push_back(StationAdminItemDTO{
-            .station_id = std::stoll(res.value(i, 0)),
+            .station_id = sid,
             .station_name = res.value(i, 1),
             .address = res.value(i, 2),
             .latitude = std::stod(res.value(i, 3)),
@@ -815,11 +818,11 @@ Result<StationAdminListResponseData> DbRepository::get_stations_admin_paged(
             .online_piles = online,
             .idle_piles = idle,
             .online_rate = rate,
-            .price_per_kwh = std::stod(res.value(i, 8)),
-            .service_fee_per_kwh = std::stod(res.value(i, 9)),
-            .overtime_fee_per_15min = std::stod(res.value(i, 10)),
-            .status = std::stoi(res.value(i, 11)),
-            .created_at = std::stoll(res.value(i, 12))
+            .price_per_kwh = std::stod(res.value(i, 5)),
+            .service_fee_per_kwh = std::stod(res.value(i, 6)),
+            .overtime_fee_per_15min = std::stod(res.value(i, 7)),
+            .status = std::stoi(res.value(i, 8)),
+            .created_at = std::stoll(res.value(i, 9))
         });
     }
 
@@ -954,27 +957,28 @@ Result<std::vector<PileModel>> DbRepository::get_all_piles() {
     auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
-    std::string sql = "SELECT pile_id, station_id, pile_name, type, gun_type, max_power_kw, voltage_range, status, total_charge_count, total_charge_hours, last_heartbeat_at, created_at, updated_at FROM piles;";
+    std::string sql = "SELECT pile_id, station_id, pile_name, type, gun_type, max_power_kw, voltage_range, total_charge_count, total_charge_hours, last_heartbeat_at, created_at, updated_at FROM piles;";
     PgResultGuard res(conn->exec(sql.c_str()));
     if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
 
     std::vector<PileModel> piles;
     piles.reserve(res.rows());
     for (int i = 0; i < res.rows(); ++i) {
+        std::string pid = res.value(i, 0);
         piles.push_back(PileModel{
-            .pile_id = res.value(i, 0),
+            .pile_id = pid,
             .station_id = std::stoll(res.value(i, 1)),
             .pile_name = res.value(i, 2),
             .type = res.value(i, 3),
             .gun_type = res.value(i, 4),
             .max_power_kw = std::stod(res.value(i, 5)),
             .voltage_range = res.value(i, 6),
-            .status = res.value(i, 7),
-            .total_charge_count = std::stoll(res.value(i, 8)),
-            .total_charge_hours = std::stod(res.value(i, 9)),
-            .last_heartbeat_at = std::stoll(res.value(i, 10)),
-            .created_at = std::stoll(res.value(i, 11)),
-            .updated_at = std::stoll(res.value(i, 12))
+            .status = std::string(ChargingStatePool::instance().get_pile_status(pid)),
+            .total_charge_count = std::stoll(res.value(i, 7)),
+            .total_charge_hours = std::stod(res.value(i, 8)),
+            .last_heartbeat_at = std::stoll(res.value(i, 9)),
+            .created_at = std::stoll(res.value(i, 10)),
+            .updated_at = std::stoll(res.value(i, 11))
         });
     }
     return piles;
@@ -985,7 +989,7 @@ Result<std::vector<PileModel>> DbRepository::get_piles_by_station(int64_t statio
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     std::string sql = std::format(
-        "SELECT pile_id, station_id, pile_name, type, gun_type, max_power_kw, voltage_range, status, total_charge_count, total_charge_hours, last_heartbeat_at, created_at, updated_at "
+        "SELECT pile_id, station_id, pile_name, type, gun_type, max_power_kw, voltage_range, total_charge_count, total_charge_hours, last_heartbeat_at, created_at, updated_at "
         "FROM piles WHERE station_id = {} ORDER BY pile_id ASC;",
         station_id
     );
@@ -995,20 +999,21 @@ Result<std::vector<PileModel>> DbRepository::get_piles_by_station(int64_t statio
 
     std::vector<PileModel> piles;
     for (int i = 0; i < res.rows(); ++i) {
+        std::string pid = res.value(i, 0);
         piles.push_back(PileModel{
-            .pile_id = res.value(i, 0),
+            .pile_id = pid,
             .station_id = std::stoll(res.value(i, 1)),
             .pile_name = res.value(i, 2),
             .type = res.value(i, 3),
             .gun_type = res.value(i, 4),
             .max_power_kw = std::stod(res.value(i, 5)),
             .voltage_range = res.value(i, 6),
-            .status = res.value(i, 7),
-            .total_charge_count = std::stoll(res.value(i, 8)),
-            .total_charge_hours = std::stod(res.value(i, 9)),
-            .last_heartbeat_at = std::stoll(res.value(i, 10)),
-            .created_at = std::stoll(res.value(i, 11)),
-            .updated_at = std::stoll(res.value(i, 12))
+            .status = std::string(ChargingStatePool::instance().get_pile_status(pid)),
+            .total_charge_count = std::stoll(res.value(i, 7)),
+            .total_charge_hours = std::stod(res.value(i, 8)),
+            .last_heartbeat_at = std::stoll(res.value(i, 9)),
+            .created_at = std::stoll(res.value(i, 10)),
+            .updated_at = std::stoll(res.value(i, 11))
         });
     }
 
@@ -1020,7 +1025,7 @@ Result<PileModel> DbRepository::get_pile_by_id(std::string_view pile_id) {
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     std::string sql = std::format(
-        "SELECT pile_id, station_id, pile_name, type, gun_type, max_power_kw, voltage_range, status, total_charge_count, total_charge_hours, last_heartbeat_at, created_at, updated_at "
+        "SELECT pile_id, station_id, pile_name, type, gun_type, max_power_kw, voltage_range, total_charge_count, total_charge_hours, last_heartbeat_at, created_at, updated_at "
         "FROM piles WHERE pile_id = '{}';",
         pile_id
     );
@@ -1028,20 +1033,21 @@ Result<PileModel> DbRepository::get_pile_by_id(std::string_view pile_id) {
     PgResultGuard res(conn->exec(sql.c_str()));
     if (!res.is_ok() || res.rows() == 0) return std::unexpected(AppError::ChargingPileNotFound);
 
+    std::string pid = res.value(0, 0);
     return PileModel{
-        .pile_id = res.value(0, 0),
+        .pile_id = pid,
         .station_id = std::stoll(res.value(0, 1)),
         .pile_name = res.value(0, 2),
         .type = res.value(0, 3),
         .gun_type = res.value(0, 4),
         .max_power_kw = std::stod(res.value(0, 5)),
         .voltage_range = res.value(0, 6),
-        .status = res.value(0, 7),
-        .total_charge_count = std::stoll(res.value(0, 8)),
-        .total_charge_hours = std::stod(res.value(0, 9)),
-        .last_heartbeat_at = std::stoll(res.value(0, 10)),
-        .created_at = std::stoll(res.value(0, 11)),
-        .updated_at = std::stoll(res.value(0, 12))
+        .status = std::string(ChargingStatePool::instance().get_pile_status(pid)),
+        .total_charge_count = std::stoll(res.value(0, 7)),
+        .total_charge_hours = std::stod(res.value(0, 8)),
+        .last_heartbeat_at = std::stoll(res.value(0, 9)),
+        .created_at = std::stoll(res.value(0, 10)),
+        .updated_at = std::stoll(res.value(0, 11))
     };
 }
 
@@ -1052,148 +1058,9 @@ Result<PileListResponseData> DbRepository::get_piles_paged(
     std::string_view status_filter,
     std::string_view type_filter
 ) {
-    auto conn = DbPool::instance().acquire_reader();
-    if (!conn) return std::unexpected(AppError::DatabaseError);
-
-    std::string norm_status = normalize_pile_status(status_filter);
-    std::string norm_type = normalize_pile_type(type_filter);
-
-    // Case 1: station_id_filter > 0 (查询指定电站的全部充电桩)
-    // 每个电站最多 30 根桩，在内存中完成全量实时状态与状态池 (ChargingStatePool) 对齐及精确过滤
-    if (station_id_filter > 0) {
-        std::string sql = std::format(
-            "SELECT p.pile_id, p.station_id, s.station_name, p.pile_name, p.type, p.max_power_kw, p.status, p.total_charge_count, p.total_charge_hours, p.last_heartbeat_at "
-            "FROM piles p LEFT JOIN stations s ON p.station_id = s.station_id "
-            "WHERE p.station_id = {} ORDER BY p.pile_id ASC;",
-            station_id_filter
-        );
-        PgResultGuard res(conn->exec(sql.c_str()));
-        if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
-
-        std::vector<PileAdminItemDTO> matched_piles;
-        matched_piles.reserve(res.rows());
-
-        for (int i = 0; i < res.rows(); ++i) {
-            std::string pid = res.value(i, 0);
-            std::string ptype = res.value(i, 4);
-            std::string st = res.value(i, 6);
-
-            // 1. 优先从内存状态池获取该桩最新运行时状态（含预约锁定 RESERVED、动态模拟 CHARGING 等）
-            auto p_pool = ChargingStatePool::instance().get_pile_state(pid);
-            if (p_pool) {
-                st = p_pool->status;
-                ptype = p_pool->type;
-            }
-
-            // 2. 状态过滤 (若指定了 status)
-            if (!norm_status.empty() && st != norm_status) {
-                continue;
-            }
-
-            // 3. 类型过滤 (若指定了 type: FAST / SLOW)
-            if (!norm_type.empty() && ptype != norm_type) {
-                continue;
-            }
-
-            int st_code = pile_status_to_code(st);
-
-            matched_piles.push_back(PileAdminItemDTO{
-                .pile_id = pid,
-                .station_id = std::stoll(res.value(i, 1)),
-                .station_name = res.value(i, 2),
-                .pile_name = res.value(i, 3),
-                .type = ptype,
-                .power_kw = std::stod(res.value(i, 5)),
-                .current_status = st,
-                .current_status_code = st_code,
-                .status = st,
-                .status_code = st_code,
-                .status_desc = std::string(pile_status_to_desc(st)),
-                .total_charge_count = std::stoll(res.value(i, 7)),
-                .total_charge_hours = std::stod(res.value(i, 8)),
-                .last_heartbeat_at = std::stoll(res.value(i, 9))
-            });
-        }
-
-        int64_t total = matched_piles.size();
-        int offset = (page - 1) * page_size;
-
-        PileListResponseData data;
-        data.total = total;
-        data.page = page;
-        data.page_size = page_size;
-
-        if (offset < total) {
-            int end_idx = std::min<int>(offset + page_size, total);
-            for (int i = offset; i < end_idx; ++i) {
-                data.piles.push_back(std::move(matched_piles[i]));
-            }
-        }
-        return data;
-    }
-
-    // Case 2: station_id 未指定 (全网电桩分页，按 pile_id 递增顺序排列)
-    int offset = (page - 1) * page_size;
-    std::string where = "WHERE 1=1";
-    if (!norm_status.empty()) {
-        where += std::format(" AND p.status = '{}'", norm_status);
-    }
-    if (!norm_type.empty()) {
-        where += std::format(" AND p.type = '{}'", norm_type);
-    }
-
-    std::string count_sql = std::format("SELECT COUNT(*) FROM piles p {};", where);
-    PgResultGuard count_res(conn->exec(count_sql.c_str()));
-    int64_t total = count_res.is_ok() && count_res.rows() > 0 ? std::stoll(count_res.value(0, 0)) : 0;
-
-    std::string sql = std::format(
-        "SELECT p.pile_id, p.station_id, s.station_name, p.pile_name, p.type, p.max_power_kw, p.status, p.total_charge_count, p.total_charge_hours, p.last_heartbeat_at "
-        "FROM piles p LEFT JOIN stations s ON p.station_id = s.station_id "
-        "{} ORDER BY p.pile_id ASC LIMIT {} OFFSET {};",
-        where, page_size, offset
+    return ChargingStatePool::instance().get_piles_paged(
+        page, page_size, station_id_filter, status_filter, type_filter
     );
-
-    PgResultGuard res(conn->exec(sql.c_str()));
-    if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
-
-    PileListResponseData data;
-    data.total = total;
-    data.page = page;
-    data.page_size = page_size;
-
-    for (int i = 0; i < res.rows(); ++i) {
-        std::string pid = res.value(i, 0);
-        std::string st = res.value(i, 6);
-        std::string ptype = res.value(i, 4);
-
-        // 优先使用内存状态池中的最新运行时状态
-        auto p_pool = ChargingStatePool::instance().get_pile_state(pid);
-        if (p_pool) {
-            st = p_pool->status;
-            ptype = p_pool->type;
-        }
-
-        int st_code = pile_status_to_code(st);
-
-        data.piles.push_back(PileAdminItemDTO{
-            .pile_id = pid,
-            .station_id = std::stoll(res.value(i, 1)),
-            .station_name = res.value(i, 2),
-            .pile_name = res.value(i, 3),
-            .type = ptype,
-            .power_kw = std::stod(res.value(i, 5)),
-            .current_status = st,
-            .current_status_code = st_code,
-            .status = st,
-            .status_code = st_code,
-            .status_desc = std::string(pile_status_to_desc(st)),
-            .total_charge_count = std::stoll(res.value(i, 7)),
-            .total_charge_hours = std::stod(res.value(i, 8)),
-            .last_heartbeat_at = std::stoll(res.value(i, 9))
-        });
-    }
-
-    return data;
 }
 
 Result<void> DbRepository::create_pile(const CreatePileRequest& req) {
@@ -1205,28 +1072,36 @@ Result<void> DbRepository::create_pile(const CreatePileRequest& req) {
     std::string v_range = req.voltage_range.empty() ? "200V-750V" : req.voltage_range;
 
     std::string sql = std::format(
-        "INSERT INTO piles (pile_id, station_id, pile_name, type, gun_type, max_power_kw, voltage_range, status, total_charge_count, total_charge_hours, last_heartbeat_at, created_at, updated_at) "
-        "VALUES ('{}', {}, '{}', '{}', '{}', {}, '{}', 'IDLE', 0, 0.0, {}, {}, {});",
+        "INSERT INTO piles (pile_id, station_id, pile_name, type, gun_type, max_power_kw, voltage_range, total_charge_count, total_charge_hours, last_heartbeat_at, created_at, updated_at) "
+        "VALUES ('{}', {}, '{}', '{}', '{}', {}, '{}', 0, 0.0, {}, {}, {});",
         req.pile_id, req.station_id, req.pile_name, req.type, req.gun_type, pwr, v_range, now, now, now
     );
 
     PgResultGuard res(conn->exec(sql.c_str()));
     if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
+
+    // 内存池注册新桩
+    ChargingStatePool::instance().register_pile(req.pile_id, req.station_id, req.pile_name, req.type, pwr);
+
     return {};
 }
 
 Result<void> DbRepository::update_pile_status(std::string_view pile_id, std::string_view status) {
+    ChargingStatePool::instance().set_pile_status(pile_id, status);
+
     auto conn = DbPool::instance().acquire_writer();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int64_t now = current_time_ms();
-    std::string sql = std::format("UPDATE piles SET status = '{}', last_heartbeat_at = {}, updated_at = {} WHERE pile_id = '{}';", status, now, now, pile_id);
+    std::string sql = std::format("UPDATE piles SET last_heartbeat_at = {}, updated_at = {} WHERE pile_id = '{}';", now, now, pile_id);
     PgResultGuard res(conn->exec(sql.c_str()));
     if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
     return {};
 }
 
 Result<void> DbRepository::update_pile_metrics(std::string_view pile_id, int64_t add_count, double add_hours) {
+    ChargingStatePool::instance().increment_charge_stats(pile_id, add_hours);
+
     auto conn = DbPool::instance().acquire_writer();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
@@ -1368,10 +1243,6 @@ Result<void> DbRepository::create_order(const OrderModel& order) {
         PgResultGuard res(conn.exec(sql.c_str()));
         if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
 
-        // 将电桩状态置为 CHARGING
-        std::string p_sql = std::format("UPDATE piles SET status = 'CHARGING', updated_at = {} WHERE pile_id = '{}';", order.start_time, order.pile_id);
-        conn.exec(p_sql.c_str());
-
         return {};
     });
 
@@ -1410,9 +1281,12 @@ Result<StopChargingResponseData> DbRepository::stop_order(
         PgResultGuard res(conn.exec(sql.c_str()));
         if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
 
-        // 桩位状态恢复为 IDLE
-        std::string p_sql = std::format("UPDATE piles SET status = 'IDLE', total_charge_count = total_charge_count + 1, total_charge_hours = total_charge_hours + {}, updated_at = {} WHERE pile_id = '{}';", static_cast<double>(duration) / 3600.0, end_time, o_res->pile_id);
+        // 桩位指标更新 (DB 与 内存池)
+        double add_h = static_cast<double>(duration) / 3600.0;
+        std::string p_sql = std::format("UPDATE piles SET total_charge_count = total_charge_count + 1, total_charge_hours = total_charge_hours + {}, updated_at = {} WHERE pile_id = '{}';", add_h, end_time, o_res->pile_id);
         conn.exec(p_sql.c_str());
+        ChargingStatePool::instance().increment_charge_stats(o_res->pile_id, add_h);
+        ChargingStatePool::instance().set_pile_status(o_res->pile_id, "IDLE");
 
         return StopChargingResponseData{
             .order_id = std::string(order_id),
@@ -1876,42 +1750,7 @@ Result<AdminRevenueTrendData> DbRepository::get_admin_revenue_trend(int days) {
 }
 
 Result<AdminPileStatusOverviewData> DbRepository::get_admin_pile_status_overview() {
-    auto conn = DbPool::instance().acquire_reader();
-    if (!conn) return std::unexpected(AppError::DatabaseError);
-
-    std::string sql = "SELECT status, COUNT(*) FROM piles GROUP BY status;";
-    PgResultGuard res(conn->exec(sql.c_str()));
-    if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
-
-    int in_use = 0;
-    int idle = 0;
-    int fault = 0;
-    int total = 0;
-
-    for (int i = 0; i < res.rows(); ++i) {
-        std::string st = res.value(i, 0);
-        int cnt = std::stoi(res.value(i, 1));
-        total += cnt;
-        if (st == "CHARGING" || st == "PREPARING" || st == "FINISHING" || st == "RESERVED") in_use += cnt;
-        else if (st == "IDLE") idle += cnt;
-        else if (st == "FAULT" || st == "MAINTENANCE" || st == "OFFLINE") fault += cnt;
-    }
-
-    double in_use_pct = total > 0 ? (static_cast<double>(in_use) / total * 100.0) : 0.0;
-    double idle_pct = total > 0 ? (static_cast<double>(idle) / total * 100.0) : 0.0;
-    double fault_pct = total > 0 ? (static_cast<double>(fault) / total * 100.0) : 0.0;
-    double online_rate = total > 0 ? (static_cast<double>(total - fault) / total * 100.0) : 100.0;
-
-    return AdminPileStatusOverviewData{
-        .total_piles = total,
-        .in_use_count = in_use,
-        .in_use_percentage = in_use_pct,
-        .idle_count = idle,
-        .idle_percentage = idle_pct,
-        .fault_count = fault,
-        .fault_percentage = fault_pct,
-        .online_rate = online_rate
-    };
+    return ChargingStatePool::instance().get_pile_status_overview();
 }
 
 // ==========================================
@@ -1936,7 +1775,7 @@ Result<ReservePileResponseData> DbRepository::create_reservation(int64_t user_id
 
         // 2. 检查电桩是否存在以及所属电站
         std::string pile_sql = std::format(
-            "SELECT p.station_id, p.status, s.station_name, s.status FROM piles p JOIN stations s ON p.station_id = s.station_id WHERE p.pile_id = '{}' FOR UPDATE;",
+            "SELECT p.station_id, s.station_name, s.status FROM piles p JOIN stations s ON p.station_id = s.station_id WHERE p.pile_id = '{}';",
             pile_id
         );
         PgResultGuard p_res(conn.exec(pile_sql.c_str()));
@@ -1944,15 +1783,11 @@ Result<ReservePileResponseData> DbRepository::create_reservation(int64_t user_id
             return std::unexpected(AppError::ChargingPileNotFound);
         }
         int64_t st_id = std::stoll(p_res.value(0, 0));
-        std::string p_status = p_res.value(0, 1);
-        std::string st_name = p_res.value(0, 2);
-        int s_status = std::stoi(p_res.value(0, 3));
+        std::string st_name = p_res.value(0, 1);
+        int s_status = std::stoi(p_res.value(0, 2));
 
         if (s_status == 2) {
             return std::unexpected(AppError::StationNotFound);
-        }
-        if (p_status != "IDLE") {
-            return std::unexpected(AppError::PileBusyOrReserved);
         }
 
         // 3. 锁定钱包并检查余额 (需要 >= 20.00元, 即 2000分)
@@ -1982,13 +1817,6 @@ Result<ReservePileResponseData> DbRepository::create_reservation(int64_t user_id
             res_id, user_id, st_id, pile_id, now, expire_at, now
         );
         conn.exec(insert_res.c_str());
-
-        // 6. 更新充电桩状态为 RESERVED
-        std::string update_pile = std::format(
-            "UPDATE piles SET status = 'RESERVED', updated_at = {} WHERE pile_id = '{}';",
-            now, pile_id
-        );
-        conn.exec(update_pile.c_str());
 
         // 7. 记录财务流水
         std::string tx_id = std::format("TX_RES_DEP_{}_{}", now, user_id);
@@ -2142,13 +1970,6 @@ Result<CancelReservationResponseData> DbRepository::cancel_reservation(int64_t u
         );
         conn.exec(u_res_sql.c_str());
 
-        // 恢复电桩为 IDLE
-        std::string u_pile_sql = std::format(
-            "UPDATE piles SET status = 'IDLE', updated_at = {} WHERE pile_id = '{}';",
-            now, pile_id
-        );
-        conn.exec(u_pile_sql.c_str());
-
         // 记录退款流水
         std::string tx_id = std::format("TX_RES_REF_{}_{}", now, user_id);
         std::string insert_flow = std::format(
@@ -2257,13 +2078,6 @@ Result<std::vector<std::string>> DbRepository::timeout_expired_reservations() {
                 now, res_id
             );
             conn.exec(u_res.c_str());
-
-            // 桩恢复为 IDLE
-            std::string u_pile = std::format(
-                "UPDATE piles SET status = 'IDLE', updated_at = {} WHERE pile_id = '{}';",
-                now, pile_id
-            );
-            conn.exec(u_pile.c_str());
         }
 
         return expired_piles;

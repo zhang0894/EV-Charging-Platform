@@ -172,7 +172,31 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
             }
         }
 
-        return StationController::handle_inquire_stations(name, district, lat_opt, lon_opt, page, page_size);
+        std::optional<int> status_opt;
+        if (query.contains("status")) {
+            std::string st_str = query["status"];
+            if (st_str == "1" || st_str == "ONLINE" || st_str == "online") {
+                status_opt = 1;
+            } else if (st_str == "2" || st_str == "OFFLINE" || st_str == "offline") {
+                status_opt = 2;
+            } else {
+                try {
+                    status_opt = std::stoi(st_str);
+                } catch (...) {}
+            }
+        }
+
+        std::optional<bool> fast_pile_opt;
+        if (query.contains("fast_pile")) {
+            std::string fp_str = query["fast_pile"];
+            if (fp_str == "true" || fp_str == "1" || fp_str == "TRUE") {
+                fast_pile_opt = true;
+            } else if (fp_str == "false" || fp_str == "0" || fp_str == "FALSE") {
+                fast_pile_opt = false;
+            }
+        }
+
+        return StationController::handle_inquire_stations(name, district, lat_opt, lon_opt, status_opt, fast_pile_opt, page, page_size);
     }
 
     // 正则路径匹配: /api/v1/stations/{station_id}

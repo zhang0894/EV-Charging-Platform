@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS stations (
 
 CREATE INDEX IF NOT EXISTS idx_stations_lat_lng ON stations(latitude, longitude);
 
--- 5. 充电桩设备表
+-- 5. 充电桩设备表 (静态硬件参数与历史累计指标，实时运行状态由内存状态池托管)
 CREATE TABLE IF NOT EXISTS piles (
     pile_id VARCHAR(32) PRIMARY KEY,
     station_id BIGINT NOT NULL REFERENCES stations(station_id) ON DELETE CASCADE,
@@ -83,7 +83,6 @@ CREATE TABLE IF NOT EXISTS piles (
     gun_type VARCHAR(32) DEFAULT '国标2015',
     max_power_kw DOUBLE PRECISION NOT NULL DEFAULT 120.0,
     voltage_range VARCHAR(32) DEFAULT '200V-750V',
-    status VARCHAR(20) NOT NULL DEFAULT 'IDLE', -- 'IDLE', 'CHARGING', 'FAULT', 'MAINTENANCE', 'OFFLINE'
     total_charge_count BIGINT DEFAULT 0,
     total_charge_hours DOUBLE PRECISION DEFAULT 0.0,
     last_heartbeat_at BIGINT DEFAULT 0,
@@ -92,7 +91,6 @@ CREATE TABLE IF NOT EXISTS piles (
 );
 
 CREATE INDEX IF NOT EXISTS idx_piles_station_id ON piles(station_id);
-CREATE INDEX IF NOT EXISTS idx_piles_status ON piles(status);
 
 -- 6. 充电业务订单表
 CREATE TABLE IF NOT EXISTS charging_orders (

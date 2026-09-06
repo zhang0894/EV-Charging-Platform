@@ -267,15 +267,15 @@ bool SeedDataGenerator::import_from_json(const std::string& data_dir) {
     constexpr int PILE_BATCH = 1000;
     for (size_t i = 0; i < piles.size(); i += PILE_BATCH) {
         size_t end_idx = std::min(i + PILE_BATCH, piles.size());
-        std::string p_sql = "INSERT INTO piles (pile_id, station_id, pile_name, type, gun_type, max_power_kw, voltage_range, status, total_charge_count, total_charge_hours, last_heartbeat_at, created_at, updated_at) VALUES ";
+        std::string p_sql = "INSERT INTO piles (pile_id, station_id, pile_name, type, gun_type, max_power_kw, voltage_range, total_charge_count, total_charge_hours, last_heartbeat_at, created_at, updated_at) VALUES ";
 
         for (size_t j = i; j < end_idx; ++j) {
             const auto& p = piles[j];
             if (j > i) p_sql += ", ";
-            p_sql += std::format("('{}', {}, '{}', '{}', '{}', {:.1f}, '{}', '{}', {}, {:.1f}, {}, {}, {})",
+            p_sql += std::format("('{}', {}, '{}', '{}', '{}', {:.1f}, '{}', {}, {:.1f}, {}, {}, {})",
                                  sql_escape(p.pile_id), p.station_id, sql_escape(p.pile_name),
                                  sql_escape(p.type), sql_escape(p.gun_type), p.max_power_kw,
-                                 sql_escape(p.voltage_range), sql_escape(p.status),
+                                 sql_escape(p.voltage_range),
                                  p.total_charge_count, p.total_charge_hours, p.last_heartbeat_at,
                                  p.created_at, p.updated_at);
         }

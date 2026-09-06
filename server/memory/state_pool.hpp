@@ -3,6 +3,7 @@
 #include "../common/types.hpp"
 #include "../common/models.hpp"
 #include "../data/static_stations.hpp"
+#include "../db/db_pool.hpp"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -13,6 +14,7 @@
 #include <fstream>
 #include <filesystem>
 #include <random>
+#include <iostream>
 
 namespace ev {
 
@@ -58,6 +60,11 @@ struct PileRuntimeState {
     int64_t reserved_user_id{0};
     std::string reservation_id;
     int64_t reservation_expire_time{0};
+
+    // 历史累计与心跳指标
+    int64_t total_charge_count{0};
+    double total_charge_hours{0.0};
+    int64_t last_heartbeat_at{0};
 };
 
 struct StationPileSummary {
@@ -121,6 +128,9 @@ public:
             double max_power_kw{};
             std::string voltage_range{};
             std::string status{};
+            int64_t total_charge_count{};
+            double total_charge_hours{};
+            int64_t last_heartbeat_at{};
         };
 
         std::vector<JsonPile> piles;
@@ -192,7 +202,10 @@ public:
                 .is_simulated = is_chg,
                 .reserved_user_id = 0,
                 .reservation_id = "",
-                .reservation_expire_time = 0
+                .reservation_expire_time = 0,
+                .total_charge_count = p.total_charge_count,
+                .total_charge_hours = p.total_charge_hours,
+                .last_heartbeat_at = p.last_heartbeat_at > 0 ? p.last_heartbeat_at : now
             };
 
             if (is_chg) {
@@ -275,7 +288,10 @@ public:
                     .is_simulated = is_chg,
                     .reserved_user_id = 0,
                     .reservation_id = "",
-                    .reservation_expire_time = 0
+                    .reservation_expire_time = 0,
+                    .total_charge_count = 0,
+                    .total_charge_hours = 0.0,
+                    .last_heartbeat_at = now
                 };
 
                 if (is_chg) {
@@ -340,7 +356,10 @@ public:
                 .is_simulated = is_chg,
                 .reserved_user_id = 0,
                 .reservation_id = "",
-                .reservation_expire_time = 0
+                .reservation_expire_time = 0,
+                .total_charge_count = p.total_charge_count,
+                .total_charge_hours = p.total_charge_hours,
+                .last_heartbeat_at = p.last_heartbeat_at > 0 ? p.last_heartbeat_at : now
             };
             if (is_chg) {
                 active_charging_pile_ids_.insert(p.pile_id);
@@ -355,6 +374,15 @@ public:
             return it->second;
         }
         return std::nullopt;
+    }
+
+    std::string_view get_pile_status(std::string_view pile_id) const {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        auto it = piles_.find(std::string(pile_id));
+        if (it != piles_.end()) {
+            return it->second.status;
+        }
+        return "IDLE";
     }
 
     std::vector<PileRuntimeState> get_piles_by_station(int64_t station_id) const {
@@ -422,6 +450,19 @@ public:
             }
         }
         return sum;
+    }
+
+    bool has_fast_pile(int64_t station_id) const {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        if (station_id >= 1 && static_cast<size_t>(station_id) < station_pile_ids_.size()) {
+            for (const auto& pid : station_pile_ids_[station_id]) {
+                auto it = piles_.find(pid);
+                if (it != piles_.end() && it->second.type == "FAST") {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     void set_station_piles_offline(int64_t station_id) {
@@ -539,7 +580,7 @@ public:
         std::unique_lock<std::shared_mutex> lock(mutex_);
         auto it = piles_.find(std::string(pile_id));
         if (it == piles_.end()) return false;
-        if (it->second.status != "IDLE") return false;
+        if (it->second.status != "IDLE" && (it->second.status != "RESERVED" || it->second.reserved_user_id != user_id)) return false;
 
         it->second.status = "RESERVED";
         it->second.is_simulated = false;
@@ -639,6 +680,209 @@ public:
         } else {
             active_charging_pile_ids_.erase(state.pile_id);
         }
+    }
+
+    void register_pile(std::string_view pile_id, int64_t station_id, std::string_view pile_name, std::string_view type, double max_power_kw) {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        if (station_id >= 0) {
+            if (static_cast<size_t>(station_id) >= station_pile_ids_.size()) {
+                station_pile_ids_.resize(station_id + 1);
+            }
+            station_pile_ids_[station_id].push_back(std::string(pile_id));
+        }
+        int64_t now = current_time_ms();
+        piles_[std::string(pile_id)] = PileRuntimeState{
+            .pile_id = std::string(pile_id),
+            .station_id = station_id,
+            .pile_name = std::string(pile_name),
+            .type = std::string(type),
+            .max_power_kw = max_power_kw,
+            .status = "IDLE",
+            .voltage_v = 0.0,
+            .current_a = 0.0,
+            .power_kw = 0.0,
+            .current_soc = 0,
+            .temperature_celsius = 25.0,
+            .charged_energy_kwh = 0.0,
+            .electricity_price = 1.45,
+            .service_price = 0.35,
+            .last_update_time = now,
+            .is_simulated = false,
+            .total_charge_count = 0,
+            .total_charge_hours = 0.0,
+            .last_heartbeat_at = now
+        };
+    }
+
+    void increment_charge_stats(std::string_view pile_id, double hours) {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        auto it = piles_.find(std::string(pile_id));
+        if (it != piles_.end()) {
+            it->second.total_charge_count++;
+            it->second.total_charge_hours += hours;
+            it->second.last_heartbeat_at = current_time_ms();
+        }
+    }
+
+    AdminPileStatusOverviewData get_pile_status_overview() const {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        int in_use = 0;
+        int idle = 0;
+        int fault = 0;
+        int total = static_cast<int>(piles_.size());
+
+        for (const auto& [_, p] : piles_) {
+            if (p.status == "CHARGING" || p.status == "PREPARING" || p.status == "FINISHING" || p.status == "RESERVED") in_use++;
+            else if (p.status == "IDLE") idle++;
+            else if (p.status == "FAULT" || p.status == "MAINTENANCE" || p.status == "OFFLINE") fault++;
+        }
+
+        double in_use_pct = total > 0 ? (static_cast<double>(in_use) / total * 100.0) : 0.0;
+        double idle_pct = total > 0 ? (static_cast<double>(idle) / total * 100.0) : 0.0;
+        double fault_pct = total > 0 ? (static_cast<double>(fault) / total * 100.0) : 0.0;
+
+        return AdminPileStatusOverviewData{
+            .total_piles = total,
+            .in_use_count = in_use,
+            .in_use_percentage = in_use_pct,
+            .idle_count = idle,
+            .idle_percentage = idle_pct,
+            .fault_count = fault,
+            .fault_percentage = fault_pct
+        };
+    }
+
+    void load_active_reservations_from_db() {
+        if (!DbPool::instance().is_initialized()) return;
+        auto conn = DbPool::instance().acquire_reader();
+        if (!conn) return;
+
+        int64_t now = current_time_ms();
+        std::string sql = std::format(
+            "SELECT pile_id, user_id, reservation_id, expire_at FROM pile_reservations "
+            "WHERE status = 'ACTIVE' AND expire_at > {};",
+            now
+        );
+        PgResultGuard res(conn->exec(sql.c_str()));
+        if (res.is_ok()) {
+            std::unique_lock<std::shared_mutex> lock(mutex_);
+            int rows = res.rows();
+            for (int i = 0; i < rows; ++i) {
+                std::string pid = res.value(i, 0);
+                int64_t uid = std::stoll(res.value(i, 1));
+                std::string rid = res.value(i, 2);
+                int64_t exp = std::stoll(res.value(i, 3));
+
+                auto it = piles_.find(pid);
+                if (it != piles_.end()) {
+                    it->second.status = "RESERVED";
+                    it->second.is_simulated = false;
+                    it->second.reserved_user_id = uid;
+                    it->second.reservation_id = rid;
+                    it->second.reservation_expire_time = exp;
+                    it->second.last_update_time = now;
+                    active_charging_pile_ids_.erase(pid);
+                }
+            }
+            if (rows > 0) {
+                std::cout << "  [OK] Successfully loaded " << rows << " active pile reservations into memory.\n" << std::flush;
+            }
+        }
+    }
+
+    PileListResponseData get_piles_paged(
+        int page,
+        int page_size,
+        int64_t station_id_filter,
+        std::string_view status_filter,
+        std::string_view type_filter
+    ) const {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+
+        std::string norm_status = normalize_pile_status(status_filter);
+        std::string norm_type = normalize_pile_type(type_filter);
+
+        auto to_dto = [](const PileRuntimeState& p) -> PileAdminItemDTO {
+            std::string st_name;
+            const StaticStation* s = find_static_station(static_cast<int32_t>(p.station_id));
+            if (s) {
+                st_name = s->name;
+            }
+            int st_code = pile_status_to_code(p.status);
+            return PileAdminItemDTO{
+                .pile_id = p.pile_id,
+                .station_id = p.station_id,
+                .station_name = st_name,
+                .pile_name = p.pile_name,
+                .type = p.type,
+                .power_kw = p.max_power_kw,
+                .current_status = p.status,
+                .current_status_code = st_code,
+                .status = p.status,
+                .status_code = st_code,
+                .status_desc = std::string(pile_status_to_desc(p.status)),
+                .total_charge_count = p.total_charge_count,
+                .total_charge_hours = p.total_charge_hours,
+                .last_heartbeat_at = p.last_heartbeat_at
+            };
+        };
+
+        if (station_id_filter > 0) {
+            std::vector<const PileRuntimeState*> matched;
+            if (station_id_filter < static_cast<int64_t>(station_pile_ids_.size())) {
+                for (const auto& pid : station_pile_ids_[station_id_filter]) {
+                    auto it = piles_.find(pid);
+                    if (it == piles_.end()) continue;
+                    const auto& p = it->second;
+                    if (!norm_status.empty() && p.status != norm_status) continue;
+                    if (!norm_type.empty() && p.type != norm_type) continue;
+                    matched.push_back(&p);
+                }
+            }
+
+            int64_t total = matched.size();
+            int64_t offset = static_cast<int64_t>(page - 1) * page_size;
+
+            PileListResponseData data;
+            data.total = total;
+            data.page = page;
+            data.page_size = page_size;
+
+            if (offset < total) {
+                int64_t end_idx = std::min<int64_t>(offset + page_size, total);
+                for (int64_t i = offset; i < end_idx; ++i) {
+                    data.piles.push_back(to_dto(*matched[i]));
+                }
+            }
+            return data;
+        }
+
+        // 全网查询: 按 station_pile_ids_ 从站 1 到 8569 遍历，天然保证 pile_id ASC 严格递增排序
+        int64_t match_count = 0;
+        int64_t offset = static_cast<int64_t>(page - 1) * page_size;
+        int64_t end_idx = offset + page_size;
+
+        PileListResponseData data;
+        data.page = page;
+        data.page_size = page_size;
+
+        for (size_t sid = 1; sid < station_pile_ids_.size(); ++sid) {
+            for (const auto& pid : station_pile_ids_[sid]) {
+                auto it = piles_.find(pid);
+                if (it == piles_.end()) continue;
+                const auto& p = it->second;
+                if (!norm_status.empty() && p.status != norm_status) continue;
+                if (!norm_type.empty() && p.type != norm_type) continue;
+
+                if (match_count >= offset && match_count < end_idx) {
+                    data.piles.push_back(to_dto(p));
+                }
+                match_count++;
+            }
+        }
+
+        data.total = match_count;
+        return data;
     }
 
 private:

@@ -41,6 +41,8 @@ public:
         std::string_view district_param,
         std::optional<double> lat_opt,
         std::optional<double> lon_opt,
+        std::optional<int> status_opt = std::nullopt,
+        std::optional<bool> fast_pile_opt = std::nullopt,
         int page = 1,
         int page_size = 20
     ) {
@@ -97,6 +99,15 @@ public:
             if (!st) return;
             if (!name_param.empty() && !fuzzy_contains_icase(st->name, name_param)) {
                 return;
+            }
+            if (status_opt.has_value()) {
+                bool is_on = StationStatusManager::instance().is_online(sid);
+                int s_val = is_on ? 1 : 2;
+                if (*status_opt != s_val) return;
+            }
+            if (fast_pile_opt.has_value()) {
+                bool has_fast = ChargingStatePool::instance().has_fast_pile(sid);
+                if (*fast_pile_opt != has_fast) return;
             }
             double dist = 0.0;
             if (has_coords) {

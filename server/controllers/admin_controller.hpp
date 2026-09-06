@@ -185,7 +185,8 @@ public:
         if (!res) return make_error_response(res.error());
 
         // 加入内存状态池
-        ChargingStatePool::instance().set_pile_status(p_req.pile_id, "IDLE");
+        double pwr = (p_req.max_power_kw > 0.0) ? p_req.max_power_kw : ((p_req.power_kw > 0.0) ? p_req.power_kw : 120.0);
+        ChargingStatePool::instance().register_pile(p_req.pile_id, p_req.station_id, p_req.pile_name, p_req.type, pwr);
 
         return make_empty_success_response();
     }
