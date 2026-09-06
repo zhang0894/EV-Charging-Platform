@@ -330,16 +330,8 @@ public:
         };
 
         for (const auto& p : pool_piles) {
-            int st_code = 1;
-            std::string st_desc = "空闲中";
-            if (p.status == "IDLE") { st_code = 1; st_desc = "空闲可用"; }
-            else if (p.status == "PREPARING") { st_code = 2; st_desc = "插枪准备中"; }
-            else if (p.status == "CHARGING") { st_code = 3; st_desc = "充电中"; }
-            else if (p.status == "FINISHING") { st_code = 4; st_desc = "充电完成待拔枪"; }
-            else if (p.status == "FAULT") { st_code = 5; st_desc = "设备故障"; }
-            else if (p.status == "MAINTENANCE") { st_code = 6; st_desc = "锁定维护中"; }
-            else if (p.status == "OFFLINE") { st_code = 7; st_desc = "离线"; }
-            else if (p.status == "RESERVED") { st_code = 8; st_desc = "已预约锁定"; }
+            int st_code = pile_status_to_code(p.status);
+            std::string st_desc = std::string(pile_status_to_desc(p.status));
 
             data.piles.push_back(PileDetailDTO{
                 .pile_id = p.pile_id,
@@ -351,7 +343,9 @@ public:
                 .voltage_range = "200V-750V",
                 .status = p.status,
                 .status_code = st_code,
-                .status_desc = st_desc
+                .status_desc = st_desc,
+                .current_status = p.status,
+                .current_status_code = st_code
             });
         }
 

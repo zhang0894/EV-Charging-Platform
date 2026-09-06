@@ -33,6 +33,30 @@ inline std::string_view to_string(PileStatus status) {
     return "UNKNOWN";
 }
 
+inline int pile_status_to_code(std::string_view st) {
+    if (st == "IDLE") return 1;
+    if (st == "PREPARING") return 2;
+    if (st == "CHARGING") return 3;
+    if (st == "FINISHING") return 4;
+    if (st == "FAULT") return 5;
+    if (st == "MAINTENANCE") return 6;
+    if (st == "OFFLINE") return 7;
+    if (st == "RESERVED") return 8;
+    return 1;
+}
+
+inline std::string_view pile_status_to_desc(std::string_view st) {
+    if (st == "IDLE") return "空闲可用";
+    if (st == "PREPARING") return "插枪准备中";
+    if (st == "CHARGING") return "充电中";
+    if (st == "FINISHING") return "充电完成待拔枪";
+    if (st == "FAULT") return "设备故障";
+    if (st == "MAINTENANCE") return "锁定维护中";
+    if (st == "OFFLINE") return "离线";
+    if (st == "RESERVED") return "已预约锁定";
+    return "空闲可用";
+}
+
 // 充电桩类型
 enum class PileType : uint8_t {
     FAST = 1,  // 直流快充

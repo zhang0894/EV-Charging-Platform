@@ -2,6 +2,7 @@
 #include "async_flow_persister.hpp"
 #include "../cache/redis_cache.hpp"
 #include "../memory/station_price_manager.hpp"
+#include "../memory/state_pool.hpp"
 #include <format>
 #include <iostream>
 #include <sstream>
@@ -1086,18 +1087,19 @@ Result<PileAdminListResponseData> DbRepository::get_piles_admin_paged(
     data.page_size = page_size;
 
     for (int i = 0; i < res.rows(); ++i) {
+        std::string pid = res.value(i, 0);
         std::string st = res.value(i, 6);
-        int st_code = 1;
-        if (st == "IDLE") st_code = 1;
-        else if (st == "PREPARING") st_code = 2;
-        else if (st == "CHARGING") st_code = 3;
-        else if (st == "FINISHING") st_code = 4;
-        else if (st == "FAULT") st_code = 5;
-        else if (st == "MAINTENANCE") st_code = 6;
-        else if (st == "OFFLINE") st_code = 7;
+
+        // 优先使用内存状态池中的最新运行时状态
+        auto p_pool = ChargingStatePool::instance().get_pile_state(pid);
+        if (p_pool) {
+            st = p_pool->status;
+        }
+
+        int st_code = pile_status_to_code(st);
 
         data.piles.push_back(PileAdminItemDTO{
-            .pile_id = res.value(i, 0),
+            .pile_id = pid,
             .station_id = std::stoll(res.value(i, 1)),
             .station_name = res.value(i, 2),
             .pile_name = res.value(i, 3),
@@ -1105,6 +1107,9 @@ Result<PileAdminListResponseData> DbRepository::get_piles_admin_paged(
             .power_kw = std::stod(res.value(i, 5)),
             .current_status = st,
             .current_status_code = st_code,
+            .status = st,
+            .status_code = st_code,
+            .status_desc = std::string(pile_status_to_desc(st)),
             .total_charge_count = std::stoll(res.value(i, 7)),
             .total_charge_hours = std::stod(res.value(i, 8)),
             .last_heartbeat_at = std::stoll(res.value(i, 9))

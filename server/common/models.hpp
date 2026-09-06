@@ -155,6 +155,7 @@ struct LoginRequest {
     std::string auth_type{"passwordless"};
     std::string password;
     std::string account; // 管理员登录兼容
+    std::string username; // 前端用户名兼容
     std::string sms_code;
     std::string code;
 };
@@ -323,6 +324,8 @@ struct PileDetailDTO {
     std::string status{"IDLE"};
     int status_code{1};
     std::string status_desc{"空闲中"};
+    std::string current_status{"IDLE"};
+    int current_status_code{1};
 };
 
 struct StationDetailResponseData {
@@ -373,10 +376,12 @@ struct ActiveOrderCheckResponseData {
 
 struct StartChargingRequest {
     std::string pile_id;
+    std::string pileId;
     std::string strategy_type{"FULL"};
     double strategy_value{0.0};
     double pre_freeze_amount{50.0};
     int64_t station_id{0};
+    int64_t stationId{0};
 };
 
 struct StartChargingResponseData {
@@ -395,6 +400,7 @@ struct StartChargingResponseData {
 
 struct StopChargingRequest {
     std::string order_id;
+    std::string orderId;
     std::string stop_reason{"USER_MANUAL_STOP"};
 };
 
@@ -416,7 +422,9 @@ struct StopChargingResponseData {
 
 struct SettleOrderRequest {
     std::string order_id;
+    std::string orderId;
     std::string idempotent_key;
+    std::string idempotentKey;
 };
 
 struct SettleOrderResponseData {
@@ -502,6 +510,7 @@ struct OrderDetailResponseData {
 // 充电桩预约 DTO
 struct ReservePileRequest {
     std::string pile_id;
+    std::string pileId;
 };
 
 struct ReservePileResponseData {
@@ -521,6 +530,7 @@ struct ReservePileResponseData {
 
 struct CancelReservationRequest {
     std::string reservation_id;
+    std::string reservationId;
 };
 
 struct CancelReservationResponseData {
@@ -674,6 +684,9 @@ struct PileAdminItemDTO {
     double power_kw{120.0};
     std::string current_status{"IDLE"};
     int current_status_code{1};
+    std::string status{"IDLE"};
+    int status_code{1};
+    std::string status_desc{"空闲可用"};
     int64_t total_charge_count{0};
     double total_charge_hours{0.0};
     int64_t last_heartbeat_at{0};

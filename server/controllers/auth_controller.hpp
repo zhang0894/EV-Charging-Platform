@@ -198,7 +198,7 @@ public:
             return make_error_response(AppError::InvalidJsonPayload);
         }
 
-        std::string account = !login_req.account.empty() ? login_req.account : login_req.phone;
+        std::string account = !login_req.account.empty() ? login_req.account : (!login_req.username.empty() ? login_req.username : login_req.phone);
         if (account.empty()) {
             return make_error_response(AppError::InvalidParameters, "Account cannot be empty");
         }

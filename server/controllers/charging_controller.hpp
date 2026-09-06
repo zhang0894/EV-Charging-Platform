@@ -58,7 +58,13 @@ public:
     ) {
         StartChargingRequest start_req;
         auto err = glz::read_json(start_req, req.body());
-        if (err || start_req.pile_id.empty()) {
+        if (start_req.pile_id.empty() && !start_req.pileId.empty()) {
+            start_req.pile_id = start_req.pileId;
+        }
+        if (start_req.station_id <= 0 && start_req.stationId > 0) {
+            start_req.station_id = start_req.stationId;
+        }
+        if (start_req.pile_id.empty()) {
             return make_error_response(AppError::InvalidJsonPayload, "Missing pile_id");
         }
 
@@ -207,7 +213,10 @@ public:
     ) {
         StopChargingRequest stop_req;
         auto err = glz::read_json(stop_req, req.body());
-        if (err || stop_req.order_id.empty()) {
+        if (stop_req.order_id.empty() && !stop_req.orderId.empty()) {
+            stop_req.order_id = stop_req.orderId;
+        }
+        if (stop_req.order_id.empty()) {
             return make_error_response(AppError::InvalidJsonPayload, "Missing order_id");
         }
 
@@ -277,7 +286,13 @@ public:
     ) {
         SettleOrderRequest settle_req;
         auto err = glz::read_json(settle_req, req.body());
-        if (err || settle_req.order_id.empty()) {
+        if (settle_req.order_id.empty() && !settle_req.orderId.empty()) {
+            settle_req.order_id = settle_req.orderId;
+        }
+        if (settle_req.idempotent_key.empty() && !settle_req.idempotentKey.empty()) {
+            settle_req.idempotent_key = settle_req.idempotentKey;
+        }
+        if (settle_req.order_id.empty()) {
             return make_error_response(AppError::InvalidJsonPayload, "Missing order_id");
         }
 
@@ -391,8 +406,36 @@ public:
         const http::request<http::string_body>& req
     ) {
         ReservePileRequest reserve_req;
-        auto err = glz::read_json(reserve_req, req.body());
-        if (err || reserve_req.pile_id.empty()) {
+        if (!req.body().empty()) {
+            glz::read_json(reserve_req, req.body());
+        }
+        if (reserve_req.pile_id.empty() && !reserve_req.pileId.empty()) {
+            reserve_req.pile_id = reserve_req.pileId;
+        }
+        if (reserve_req.pile_id.empty()) {
+            std::string_view target = req.target();
+            auto q_pos = target.find('?');
+            if (q_pos != std::string_view::npos) {
+                std::string_view q = target.substr(q_pos + 1);
+                auto find_param = [&](std::string_view key) -> std::string {
+                    size_t pos = q.find(key);
+                    if (pos != std::string_view::npos) {
+                        size_t start = pos + key.size();
+                        if (start < q.size() && q[start] == '=') {
+                            size_t end = q.find('&', start + 1);
+                            return std::string(q.substr(start + 1, (end == std::string_view::npos) ? std::string_view::npos : (end - start - 1)));
+                        }
+                    }
+                    return "";
+                };
+                reserve_req.pile_id = find_param("pile_id");
+                if (reserve_req.pile_id.empty()) {
+                    reserve_req.pile_id = find_param("pileId");
+                }
+            }
+        }
+
+        if (reserve_req.pile_id.empty()) {
             return make_error_response(AppError::InvalidJsonPayload, "Missing or invalid pile_id");
         }
 
@@ -462,6 +505,31 @@ public:
         CancelReservationRequest cancel_req;
         if (!req.body().empty()) {
             glz::read_json(cancel_req, req.body());
+        }
+        if (cancel_req.reservation_id.empty() && !cancel_req.reservationId.empty()) {
+            cancel_req.reservation_id = cancel_req.reservationId;
+        }
+        if (cancel_req.reservation_id.empty()) {
+            std::string_view target = req.target();
+            auto q_pos = target.find('?');
+            if (q_pos != std::string_view::npos) {
+                std::string_view q = target.substr(q_pos + 1);
+                auto find_param = [&](std::string_view key) -> std::string {
+                    size_t pos = q.find(key);
+                    if (pos != std::string_view::npos) {
+                        size_t start = pos + key.size();
+                        if (start < q.size() && q[start] == '=') {
+                            size_t end = q.find('&', start + 1);
+                            return std::string(q.substr(start + 1, (end == std::string_view::npos) ? std::string_view::npos : (end - start - 1)));
+                        }
+                    }
+                    return "";
+                };
+                cancel_req.reservation_id = find_param("reservation_id");
+                if (cancel_req.reservation_id.empty()) {
+                    cancel_req.reservation_id = find_param("reservationId");
+                }
+            }
         }
 
         auto res = DbRepository::instance().cancel_reservation(user_id, cancel_req.reservation_id);

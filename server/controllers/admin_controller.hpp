@@ -335,7 +335,7 @@ public:
             .pile_id = std::string(pile_id),
             .old_status = p_res->status,
             .new_status = sc_req.target_status,
-            .new_status_code = (sc_req.target_status == "IDLE" ? 1 : (sc_req.target_status == "MAINTENANCE" ? 6 : 5)),
+            .new_status_code = pile_status_to_code(sc_req.target_status),
             .timestamp = current_time_ms()
         });
 
