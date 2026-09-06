@@ -15,12 +15,12 @@ data_generator/
 └── prepare_data.py                     # 核心离线数据预处理与生成脚本：读取高德北京充电站源数据清洗并重排 station_id，自动按真实比例为每座电站生成 5~30 根电桩、生成初始化用户群与模拟历史充电订单，产出 stations_processed.json、seed_piles.json、seed_users.json、seed_orders.json，全部支持相对路径并兼容跨平台跨环境运行
 ```
 
-### 2. 高性能服务端架构 (`server/`)
-服务端采用 C++23 标准开发，基于 Boost.Asio 协程与单线程/多线程无锁状态池，实现极致并发吞吐与内存零拷贝。
+#### 2. 高性能服务端架构 (`server/`)
+服务端采用现代 C++23 标准开发，核心网络层全面接入 **Qt 6 (基于 `QTcpServer` + `QTcpSocket` 的多线程并发事件引擎，方案二深度改造)**，兼具教学架构规范（Qt C++网络编程、信号槽机制与原生 Socket 驱动）与工业级高并发吞吐能力。结合内部微秒级无锁状态池、Boost.Geometry R-Tree 2D 空间索引、PostgreSQL 18 读写分离连接池及 Glaze 编译期反射，对外提供 100% 严格兼容的 RESTful HTTP 接口与 WebSocket 实时遥测流通道。
 ```
 server/
-├── CMakeLists.txt                      # 跨平台构建脚本 (适配 Windows MinGW-W64 GCC 与 Linux GCC/Clang，C++23)
-├── main.cpp                            # 服务端主入口程序 (多线程 Asio 协程事件循环、启动参数与 NO_PROMPT 自动化、组件生命周期管理、优雅退出)
+├── CMakeLists.txt                      # 跨平台构建脚本 (适配 Windows MSVC 2022 + Qt 6.11.0 / MinGW 与 Linux GCC/Clang，C++23)
+├── main.cpp                            # 服务端主入口程序 (基于 QCoreApplication 驱动全局 Qt 事件循环，启动参数与 NO_PROMPT 自动化、组件生命周期管理、优雅退出)
 ├── benchmark/                          # 压测工具集 (编译期控制 ENABLE_BENCHMARK)
 │   └── stress_client.cpp               # 基于 Boost.Asio 协程的高并发真实压测客户端，支持多维度阶梯发包与延迟分布统计
 ├── cache/                              # 外部与进程内高速缓存
@@ -41,7 +41,7 @@ server/
 ├── data/                               # 真实北京充电站与初始业务数据资产
 │   ├── beijing_charging_stations.json  # 高德 API 采集的全北京市 8,569 座真实充电站原始数据
 │   ├── stations_processed.json         # 经过 prepare_data.py 清洗与行政区(0~15)紧凑编码后的标准化电站 JSON
-│   ├── static_stations.hpp             # 编译期常量装载头文件：通过 C++23 std::embed 机制将 stations_processed.json 零运行时开销映射为静态常量数组，提供 O(1) 站点快速检索与不可变保护
+│   ├── static_stations.hpp             # 站点常量装载头文件：静态常量映射与跨编译器适配 (兼容 GCC #embed 与 MSVC 快速只读映射)，提供 O(1) 站点快速检索与不可变保护
 │   ├── seed_piles.json                 # 全量充电桩初始化数据 (按真实电站随机分布 5~30 根)
 │   ├── seed_users.json                 # 初始用户群体与钱包资产数据
 │   └── seed_orders.json                # 历史充电订单与退款审计数据
@@ -58,13 +58,15 @@ server/
 │   └── station_status_manager.hpp      # 电站上下线实时状态管理器 (内存位图与哈希表维护电站运营状态，下线时阻断新订单)
 ├── router/                             # 路由分发层
 │   └── http_router.hpp / .cpp          # 静态化正则预编译、Token 零拷贝解析与 RESTful 全量路由分发中心
-├── server/                             # 网络协议会话层
-│   └── http_session.hpp                # Boost.Beast HTTP/1.1 会话协程处理器 (基于 Session Strand 严格串行防竞争，支持长连接 keep-alive)
+├── server/                             # Qt 现代多线程网络接入层
+│   ├── qt_http_server.hpp / .cpp       # 继承 QTcpServer 的高性能 HTTP/WebSocket 接入网关：通过 QThread 工作线程池与 Round-Robin 算法负载均衡分配连接，完全避免单线程阻塞
+│   └── qt_http_session.hpp / .cpp      # 基于 QTcpSocket 的会话对象，处理 HTTP 流式增量解析、Keep-Alive 长连接复用及响应下发
 ├── simulation/                         # 真实充电桩动态物理推演引擎
-│   └── simulator.hpp / .cpp            # Asio 定时器驱动的高频充电推演引擎 (增量模拟充电曲线、超时占位阶梯计费、1秒扫描释放过期预约单、动态车流维序补位)
+│   └── simulator.hpp / .cpp            # 高频充电推演引擎 (多模式支持：线程定时驱动与 Asio 定时器兼容，增量模拟充电曲线、超时占位阶梯计费、1秒扫描释放过期预约单、动态车流维序补位)
 ├── websocket/                          # 实时长连接与高频流分发
 │   ├── ws_manager.hpp                  # 充电遥测流、目标站点导航监控流、全局设备状态广播流 Pub/Sub 管理器
-│   └── ws_session.hpp / .cpp           # Boost.Beast C++20 协程 WebSocket 会话管理与心跳维护 (RFC 6455)
+│   ├── qt_ws_session.hpp / .cpp        # 纯 Qt 驱动的 RFC 6455 现代 WebSocket 会话实现 (原生 QTcpSocket 处理握手签名计算、双向帧流编解码、心跳维持)
+│   └── ws_session.hpp / .cpp           # 兼容会话适配接口
 └── tests/                              # 单元测试与端到端集成测试集
     ├── test_db_pool.cpp                # 数据库连接池、行锁扣款与业务仓储测试
     ├── test_rtree_and_sim.cpp          # R-Tree 空间检索与超时占位费阶梯计算测试

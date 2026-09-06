@@ -1,12 +1,29 @@
-cmake_minimum_required(VERSION 3.28)
+cmake_minimum_required(VERSION 3.22)
 project(ChargingPlatformServer CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_AUTOMOC ON)
 
 # 查找线程库
 find_package(Threads REQUIRED)
+
+# 查找 Qt (优先 Qt 6，自动兼容 Qt 5)
+if (NOT CMAKE_PREFIX_PATH AND EXISTS "E:/Qt/6.11.0/msvc2022_64")
+    set(CMAKE_PREFIX_PATH "E:/Qt/6.11.0/msvc2022_64")
+endif()
+
+find_package(Qt6 COMPONENTS Core Network QUIET)
+if (Qt6_FOUND)
+    message(STATUS "Found Qt6: Core, Network (version ${Qt6_VERSION})")
+    set(QT_LIBRARIES Qt6::Core Qt6::Network)
+else()
+    message(STATUS "Qt6 not found, checking for Qt5 fallback...")
+    find_package(Qt5 REQUIRED COMPONENTS Core Network)
+    message(STATUS "Found Qt5: Core, Network (version ${Qt5_VERSION})")
+    set(QT_LIBRARIES Qt5::Core Qt5::Network)
+endif()
 
 # ===================================================
 # 压测模式控制参数 (默认 OFF: 保证正常版本完全不变)
@@ -26,6 +43,9 @@ set(SERVER_SOURCES
     db/seed_data.cpp
     router/http_router.cpp
     websocket/ws_session.cpp
+    websocket/qt_ws_session.cpp
+    server/qt_http_server.cpp
+    server/qt_http_session.cpp
     simulation/simulator.cpp
 )
 
@@ -110,25 +130,45 @@ if (WIN32)
         NOMINMAX
     )
 
-    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(server PRIVATE
-            -Wa,-mbig-obj
-            -O2
-        )
-    endif()
-
     set(PG_WIN_ROOT "C:/Program Files/PostgreSQL/18" CACHE PATH "PostgreSQL root directory on Windows")
     target_include_directories(server PRIVATE "${PG_WIN_ROOT}/include")
 
-    target_link_libraries(server PRIVATE
-        Threads::Threads
-        "${PG_WIN_ROOT}/bin/libpq.dll"
-        "${PG_WIN_ROOT}/bin/libcrypto-3-x64.dll"
-        "${PG_WIN_ROOT}/bin/libssl-3-x64.dll"
-        ws2_32
-        mswsock
-        stdc++exp
-    )
+    if (MSVC)
+        target_compile_options(server PRIVATE
+            /std:c++latest
+            /utf-8
+            /bigobj
+            /EHsc
+            /Zc:__cplusplus
+            /O2
+        )
+
+        target_link_libraries(server PRIVATE
+            Threads::Threads
+            ${QT_LIBRARIES}
+            "${PG_WIN_ROOT}/lib/libpq.lib"
+            ws2_32
+            mswsock
+        )
+    else()
+        if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(server PRIVATE
+                -Wa,-mbig-obj
+                -O2
+            )
+        endif()
+
+        target_link_libraries(server PRIVATE
+            Threads::Threads
+            ${QT_LIBRARIES}
+            "${PG_WIN_ROOT}/bin/libpq.dll"
+            "${PG_WIN_ROOT}/bin/libcrypto-3-x64.dll"
+            "${PG_WIN_ROOT}/bin/libssl-3-x64.dll"
+            ws2_32
+            mswsock
+            stdc++exp
+        )
+    endif()
 
 else()
     message(STATUS "Configuring for Linux / Unix platform...")
@@ -148,6 +188,7 @@ else()
 
     target_link_libraries(server PRIVATE
         Threads::Threads
+        ${QT_LIBRARIES}
     )
 
     if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")

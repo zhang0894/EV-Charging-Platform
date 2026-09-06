@@ -53,7 +53,11 @@ std::string read_file_content(const std::string& path) {
     return buf;
 }
 
-// Glaze 反序列化结构体定义
+} // namespace
+
+namespace seed_internal {
+
+// Glaze 反序列化结构体定义 (具名命名空间以支持 MSVC Glaze 反射)
 struct JsonStation {
     int32_t station_id{};
     uint8_t district_code{};
@@ -121,7 +125,9 @@ struct JsonOrder {
     int64_t updated_at{};
 };
 
-} // namespace
+} // namespace seed_internal
+
+using namespace seed_internal;
 
 bool SeedDataGenerator::clear_database() {
     auto conn = DbPool::instance().acquire();

@@ -53,20 +53,53 @@ struct StaticStation {
 
 constexpr size_t STATIC_STATION_COUNT = 8569;
 
-// C++23 #embed 语法：在编译期优雅嵌入 JSON 数据，绝无硬编码 C++ 数组
+#include <fstream>
+#include <sstream>
+#include <vector>
+
+#if defined(__has_embed)
+#if __has_embed("stations_processed.json")
+#define EV_HAS_STATIONS_EMBED 1
 inline constexpr unsigned char STATIONS_JSON_EMBED[] = {
 #embed "stations_processed.json"
     , 0
 };
+#endif
+#endif
 
 namespace detail {
 inline const std::array<StaticStation, STATIC_STATION_COUNT>& load_static_stations() {
     static const auto stations = [] {
         alignas(StaticStation) static std::array<StaticStation, STATIC_STATION_COUNT> arr{};
+#if defined(EV_HAS_STATIONS_EMBED)
         std::string_view json_str(reinterpret_cast<const char*>(STATIONS_JSON_EMBED), sizeof(STATIONS_JSON_EMBED) - 1);
+#else
+        static std::string static_json_str;
+        const std::vector<std::string> candidate_paths = {
+            "data/stations_processed.json",
+            "server/data/stations_processed.json",
+            "../data/stations_processed.json",
+            "../../data/stations_processed.json",
+            "E:/EV-Charging-Platform/server/data/stations_processed.json"
+        };
+        for (const auto& path : candidate_paths) {
+            std::ifstream file(path, std::ios::binary);
+            if (file.is_open()) {
+                std::stringstream ss;
+                ss << file.rdbuf();
+                static_json_str = ss.str();
+                break;
+            }
+        }
+        if (static_json_str.empty()) {
+            std::cerr << "[Fatal Error] Could not locate stations_processed.json in any candidate path!\n";
+            std::abort();
+        }
+        std::string_view json_str(static_json_str);
+#endif
         auto ec = glz::read_json(arr, json_str);
         if (ec) {
-            std::cerr << "[Fatal Error] Failed to parse embedded stations JSON via Glaze: "
+            std::cerr << "[Fatal Error] Failed to parse stations JSON via Glaze: "
                       << glz::format_error(ec, json_str) << std::endl;
             std::abort();
         }

@@ -16,6 +16,7 @@ public:
     }
 
     void start(boost::asio::io_context& ioc, int interval_ms = 500);
+    void start(int interval_ms = 500);
     void stop();
 
     // 单步推进模拟（供单元测试和无等待测试调用）
@@ -27,6 +28,7 @@ private:
 
     boost::asio::io_context* ioc_{nullptr};
     std::unique_ptr<boost::asio::steady_timer> timer_;
+    std::thread worker_thread_;
     int interval_ms_{500};
     std::atomic<bool> is_running_{false};
 };

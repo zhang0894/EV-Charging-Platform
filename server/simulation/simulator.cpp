@@ -17,13 +17,31 @@ void ChargingSimulator::start(boost::asio::io_context& ioc, int interval_ms) {
     timer_ = std::make_unique<boost::asio::steady_timer>(*ioc_);
 
     schedule_tick();
-    std::cout << "[Simulator] Dynamic pile simulation engine started.\n";
+    std::cout << "[Simulator] Dynamic pile simulation engine started (Asio Mode).\n";
+}
+
+void ChargingSimulator::start(int interval_ms) {
+    if (is_running_) return;
+
+    interval_ms_ = interval_ms;
+    is_running_ = true;
+    worker_thread_ = std::thread([this, interval_ms]() {
+        std::cout << "[Simulator] Dynamic pile simulation engine started (Thread Mode).\n";
+        while (is_running_) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
+            if (!is_running_) break;
+            step_once(static_cast<double>(interval_ms) / 1000.0);
+        }
+    });
 }
 
 void ChargingSimulator::stop() {
     is_running_ = false;
     if (timer_) {
         timer_->cancel();
+    }
+    if (worker_thread_.joinable()) {
+        worker_thread_.join();
     }
     std::cout << "[Simulator] Dynamic pile simulation engine stopped.\n";
 }
