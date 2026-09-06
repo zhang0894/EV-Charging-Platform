@@ -12,16 +12,16 @@
 #include <QLabel>
 #include <QMessageBox>
 
-// 表格内操作按钮样式（冻结=红 / 解冻=绿），与深色科技感主题一致
+// 表格内操作按钮样式（冻结=红 / 解冻=绿），与轻量专业风主题一致
 static const QString kFreezeBtnStyle = QStringLiteral(
-    "QPushButton{background-color:#2a1622;color:#ff6b6b;"
-    "border:1px solid #5c2a3a;border-radius:4px;padding:3px 14px;min-width:52px;}"
-    "QPushButton:hover{background-color:#5c2a3a;color:#ffffff;border-color:#ff6b6b;}");
+    "QPushButton{background-color:#fdecec;color:#dc2626;"
+    "border:1px solid #f6c8c8;border-radius:4px;padding:3px 14px;min-width:52px;}"
+    "QPushButton:hover{background-color:#fbd8d8;color:#b91c1c;border-color:#ef4444;}");
 
 static const QString kUnfreezeBtnStyle = QStringLiteral(
-    "QPushButton{background-color:#12291f;color:#2ecc71;"
-    "border:1px solid #1f5c40;border-radius:4px;padding:3px 14px;min-width:52px;}"
-    "QPushButton:hover{background-color:#1f5c40;color:#ffffff;border-color:#2ecc71;}");
+    "QPushButton{background-color:#e8f9ee;color:#16a34a;"
+    "border:1px solid #b7ebc9;border-radius:4px;padding:3px 14px;min-width:52px;}"
+    "QPushButton:hover{background-color:#c9f2d7;color:#15803d;border-color:#22c55e;}");
 
 UserManagementWidget::UserManagementWidget(QWidget *parent)
     : QWidget(parent)
@@ -56,42 +56,42 @@ void UserManagementWidget::setAuthToken(const QString &token)
     applyFiltersAndFetch(1);
 }
 
-// ------------- 界面构建（配色参考 DashboardWidget 深色科技风） -------------
+// ------------- 界面构建（轻量专业风：白底 + 浅边框 + 蓝色主色） -------------
 void UserManagementWidget::buildUi()
 {
     setObjectName(QStringLiteral("userManagementPage"));
 
     setStyleSheet(QStringLiteral(
-        /* 顶部工具栏容器 */
-        "QFrame#userToolbar{background-color:#0f1b2d;border:1px solid #1e2d45;border-radius:8px;}"
+        /* 顶部工具栏容器：白底浅边框 */
+        "QFrame#userToolbar{background-color:#ffffff;border:1px solid #e8ecf0;border-radius:8px;}"
         /* 搜索框 */
-        "QLineEdit#userSearchEdit{background-color:#0a1424;color:#e6e9ef;"
-        "border:1px solid #2a3b55;border-radius:4px;padding:6px 10px;}"
-        "QLineEdit#userSearchEdit:focus{border:1px solid #00d4ff;}"
+        "QLineEdit#userSearchEdit{background-color:#ffffff;color:#1a2332;"
+        "border:1px solid #d9dee5;border-radius:6px;padding:6px 10px;}"
+        "QLineEdit#userSearchEdit:focus{border:1px solid #2b7bff;}"
         /* 状态筛选下拉框 */
-        "QComboBox#userStatusCombo{background-color:#0a1424;color:#e6e9ef;"
-        "border:1px solid #2a3b55;border-radius:4px;padding:6px 12px;}"
-        "QComboBox#userStatusCombo:hover{border:1px solid #00d4ff;}"
-        "QComboBox#userStatusCombo QAbstractItemView{background-color:#0f1b2d;"
-        "color:#e6e9ef;selection-background-color:#1e3a5f;selection-color:#ffffff;}"
-        /* 查询/刷新按钮（与 Dashboard 趋势切换按钮同风格） */
-        "QPushButton#btnUserQuery,QPushButton#btnUserRefresh{background-color:#1a2740;"
-        "color:#b8c2d1;border:1px solid #2a3b55;border-radius:4px;padding:6px 18px;min-width:72px;}"
-        "QPushButton#btnUserQuery:hover,QPushButton#btnUserRefresh:hover{border:1px solid #00d4ff;color:#ffffff;}"
-        /* 表格 */
-        "QTableView#userTable{background-color:#0f1b2d;alternate-background-color:#12203a;"
-        "color:#e6e9ef;gridline-color:#1e2d45;border:1px solid #1e2d45;border-radius:8px;"
-        "selection-background-color:#1e3a5f;selection-color:#ffffff;}"
-        "QTableView#userTable QHeaderView::section{background-color:#162238;color:#8b9bb4;"
-        "border:none;border-bottom:1px solid #2a3b55;padding:8px;font-weight:600;}"
-        "QTableView#userTable QTableCornerButton::section{background-color:#162238;border:none;}"
+        "QComboBox#userStatusCombo{background-color:#ffffff;color:#1a2332;"
+        "border:1px solid #d9dee5;border-radius:6px;padding:6px 12px;}"
+        "QComboBox#userStatusCombo:hover{border:1px solid #2b7bff;}"
+        "QComboBox#userStatusCombo QAbstractItemView{background-color:#ffffff;"
+        "color:#1a2332;selection-background-color:#e8f0fe;selection-color:#1a5cff;}"
+        /* 查询/刷新按钮：白底浅描边，hover 蓝色 */
+        "QPushButton#btnUserQuery,QPushButton#btnUserRefresh{background-color:#ffffff;"
+        "color:#1a2332;border:1px solid #d9dee5;border-radius:6px;padding:6px 18px;min-width:72px;}"
+        "QPushButton#btnUserQuery:hover,QPushButton#btnUserRefresh:hover{border:1px solid #2b7bff;color:#2b7bff;}"
+        /* 表格：极简浅色 */
+        "QTableView#userTable{background-color:#ffffff;alternate-background-color:#f8fafc;"
+        "color:#1a2332;gridline-color:#eef1f5;border:1px solid #e8ecf0;border-radius:8px;"
+        "selection-background-color:#e8f0fe;selection-color:#1a5cff;}"
+        "QTableView#userTable QHeaderView::section{background-color:#f8fafc;color:#4a5a6e;"
+        "border:none;border-bottom:1px solid #e8ecf0;padding:8px;font-weight:600;}"
+        "QTableView#userTable QTableCornerButton::section{background-color:#f8fafc;border:none;}"
         /* 分页按钮 */
-        "QPushButton#btnUserPrev,QPushButton#btnUserNext{background-color:#1a2740;"
-        "color:#b8c2d1;border:1px solid #2a3b55;border-radius:4px;padding:5px 16px;}"
-        "QPushButton#btnUserPrev:hover:enabled,QPushButton#btnUserNext:hover:enabled{border:1px solid #00d4ff;color:#ffffff;}"
-        "QPushButton#btnUserPrev:disabled,QPushButton#btnUserNext:disabled{color:#5a6b85;border-color:#1e2d45;}"
+        "QPushButton#btnUserPrev,QPushButton#btnUserNext{background-color:#ffffff;"
+        "color:#1a2332;border:1px solid #d9dee5;border-radius:6px;padding:5px 16px;}"
+        "QPushButton#btnUserPrev:hover:enabled,QPushButton#btnUserNext:hover:enabled{border:1px solid #2b7bff;color:#2b7bff;}"
+        "QPushButton#btnUserPrev:disabled,QPushButton#btnUserNext:disabled{color:#8a9aa8;border-color:#e8ecf0;}"
         /* 页码信息 */
-        "QLabel#userPageLabel{color:#8b9bb4;font-size:13px;}"));
+        "QLabel#userPageLabel{color:#4a5a6e;font-size:13px;}"));
 
     auto *rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(20, 16, 20, 12);

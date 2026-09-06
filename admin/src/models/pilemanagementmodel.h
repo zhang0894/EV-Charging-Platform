@@ -20,12 +20,13 @@ QT_END_NAMESPACE
  * 继承自 QObject，内部持有 QStandardItemModel 作为表格数据源（每行一个充电桩），
  * 通过 getModel() 提供给 Widget 绑定 QTableView。
  *
- * 接口对应《端口设计文档》3.4 节：
- *   - GET /api/v1/admin/piles                      分页查询充电桩列表
+ * 接口对应《端口设计文档》3.4 节（新 API）：
+ *   - GET /api/v1/piles                            分页查询充电桩列表
  *       查询参数: page / page_size / station_id(可选) / status(可选) / type(可选)
+ *       注：page_size 上限为 30；
  *       status: IDLE / CHARGING / FAULT / OFFLINE（全部时不传）
  *       type:   FAST / SLOW（全部时不传）
- *   - POST /api/v1/admin/piles/{pile_id}/restart   远程重启（body: {"reason": ...}）
+ *   - POST /api/v1/admin/piles/{pile_id}/restart   远程重启（旧路径，待后端确认；body: {"reason": ...}）
  *
  * 注意：pile_id 为字符串（如 "P10101"），拼接进重启 URL 时无需编码处理。
  *
@@ -62,11 +63,11 @@ public:
     // ---------------- 状态/类型字典（供各 Widget 共享） ----------------
     /** 状态中文：IDLE->空闲, CHARGING->充电中, FAULT->故障, OFFLINE->离线 */
     static QString pileStatusText(const QString &status);
-    /** 状态配色：空闲=绿 #2ecc71, 充电中=青 #00d4ff, 故障=红 #ff5c5c, 离线=灰 #8b9bb4 */
+    /** 状态配色：空闲=绿 #16a34a, 充电中=蓝 #2b7bff, 故障=红 #dc2626, 离线=灰 #8a9aa8 */
     static QColor pileStatusColor(const QString &status);
     /** 类型中文：FAST->快充, SLOW->慢充 */
     static QString pileTypeText(const QString &type);
-    /** 类型配色：快充=青 #00d4ff, 慢充=灰 #8b9bb4 */
+    /** 类型配色：快充=蓝 #2b7bff, 慢充=灰 #8a9aa8 */
     static QColor pileTypeColor(const QString &type);
 
     explicit PileManagementModel(QObject *parent = nullptr);

@@ -11,6 +11,46 @@
 #include <QJsonObject>
 #include <QColor>
 
+#include <QApplication>
+#include <QFontMetrics>
+#include <QTableView>
+#include <QWidget>
+
+namespace {
+// 长文本单元格处理：按表格列宽以右侧省略号（Qt::ElideRight）截断显示，
+// 完整文本通过 setToolTip() 悬停展示；文本短于可用宽度时原样显示、不设 ToolTip。
+// scope 为 Model 的父对象（管理页 Widget），viewName 为目标 QTableView 的 objectName；
+// 若视图尚未显示（数据先于页面打开到达），退化为“超过 30 个字符才截断”的规则。
+// 注：本 Model 在充电站详情弹窗中也有实例（父对象为 StationManagementWidget，
+// 其下不存在 "pileTable" 视图），此时自动走 30 字符降级规则，行为安全。
+void applyElidedCellText(QStandardItem *item, const QString &fullText,
+                         QObject *scope, const char *viewName, int column)
+{
+    if (item == nullptr) return;
+
+    const QTableView *view = nullptr;
+    if (const auto *scopeWidget = qobject_cast<const QWidget *>(scope)) {
+        view = scopeWidget->findChild<const QTableView *>(QLatin1StringView(viewName));
+    }
+
+    const QFontMetrics fm(view ? view->font() : QApplication::font());
+    int available = 0;
+    if (view != nullptr && view->isVisible() && view->columnWidth(column) > 0) {
+        available = view->columnWidth(column) - 16; // 减去单元格左右内边距
+    } else {
+        // 视图未显示或列宽无效：按 30 个字符的宽度估算
+        available = fm.horizontalAdvance(fullText.left(30));
+    }
+
+    if (available > 0 && fm.horizontalAdvance(fullText) <= available) {
+        item->setText(fullText); // 宽度足够：原样显示，不设 ToolTip
+        return;
+    }
+    item->setText(fm.elidedText(fullText, Qt::ElideRight, qMax(available, 1)));
+    item->setToolTip(fullText); // 悬停显示未截断的完整内容
+}
+} // namespace
+
 // ============================================================================
 // 状态/类型字典（供 PileManagementWidget 与充电站详情弹窗共享）
 // ============================================================================
@@ -26,11 +66,11 @@ QString PileManagementModel::pileStatusText(const QString &status)
 
 QColor PileManagementModel::pileStatusColor(const QString &status)
 {
-    if (status == QStringLiteral("IDLE"))     return QColor(0x2e, 0xcc, 0x71); // 绿
-    if (status == QStringLiteral("CHARGING")) return QColor(0x00, 0xd4, 0xff); // 青
-    if (status == QStringLiteral("FAULT"))    return QColor(0xff, 0x5c, 0x5c); // 红
-    if (status == QStringLiteral("OFFLINE"))  return QColor(0x8b, 0x9b, 0xb4); // 灰
-    return QColor(0xe6, 0xe9, 0xef); // 默认白
+    if (status == QStringLiteral("IDLE"))     return QColor(0x16, 0xa3, 0x4a); // 绿
+    if (status == QStringLiteral("CHARGING")) return QColor(0x2b, 0x7b, 0xff); // 蓝
+    if (status == QStringLiteral("FAULT"))    return QColor(0xdc, 0x26, 0x26); // 红
+    if (status == QStringLiteral("OFFLINE"))  return QColor(0x8a, 0x9a, 0xa8); // 灰
+    return QColor(0x1a, 0x23, 0x32); // 默认主文字色
 }
 
 QString PileManagementModel::pileTypeText(const QString &type)
@@ -42,9 +82,9 @@ QString PileManagementModel::pileTypeText(const QString &type)
 
 QColor PileManagementModel::pileTypeColor(const QString &type)
 {
-    if (type == QStringLiteral("FAST")) return QColor(0x00, 0xd4, 0xff); // 青
-    if (type == QStringLiteral("SLOW")) return QColor(0x8b, 0x9b, 0xb4); // 灰
-    return QColor(0xe6, 0xe9, 0xef);
+    if (type == QStringLiteral("FAST")) return QColor(0x2b, 0x7b, 0xff); // 蓝
+    if (type == QStringLiteral("SLOW")) return QColor(0x8a, 0x9a, 0xa8); // 灰
+    return QColor(0x1a, 0x23, 0x32);
 }
 
 // ============================================================================
@@ -90,7 +130,8 @@ void PileManagementModel::fetchPiles(int page, int pageSize, int stationId,
 
     ensureNetworkManager();
 
-    QUrl url(m_serverBase + QStringLiteral("/api/v1/admin/piles"));
+    // 新接口：GET /api/v1/piles（旧 /api/v1/admin/piles 已移除，返回 404）
+    QUrl url(m_serverBase + QStringLiteral("/api/v1/piles"));
     QUrlQuery query;
     query.addQueryItem(QStringLiteral("page"), QString::number(m_page));
     query.addQueryItem(QStringLiteral("page_size"), QString::number(m_pageSize));
@@ -183,9 +224,11 @@ void PileManagementModel::populatePiles(const QJsonArray &piles)
         // 桩编号列
         QStandardItem *idItem = new QStandardItem(pileId);
         idItem->setTextAlignment(Qt::AlignCenter);
-        // 所属电站列
-        QStandardItem *stationItem = new QStandardItem(stationName);
+        // 所属电站列（超长省略号截断，悬停显示电站全称）
+        QStandardItem *stationItem = new QStandardItem();
         stationItem->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        applyElidedCellText(stationItem, stationName, parent(), "pileTable",
+                            static_cast<int>(StationNameCol));
         // 类型列（快充青 / 慢充灰）
         QStandardItem *typeItem = new QStandardItem(pileTypeText(type));
         typeItem->setTextAlignment(Qt::AlignCenter);
@@ -226,7 +269,7 @@ void PileManagementModel::handlePilesReply(QNetworkReply *reply)
     const QByteArray body = reply->readAll();
     reply->deleteLater();
 
-    const QString apiTag = QStringLiteral("GET /api/v1/admin/piles");
+    const QString apiTag = QStringLiteral("GET /api/v1/piles");
 
     if (netError != QNetworkReply::NoError) {
         const QString msg = QStringLiteral("%1 网络请求失败 (HTTP %2): %3")
