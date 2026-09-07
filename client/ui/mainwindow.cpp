@@ -1,7 +1,10 @@
 #include "ui/mainwindow.h"
 
 #include "ui/chargepage.h"
-#include "ui/placeholderpage.h"
+#include "ui/orderspage.h"
+#include "ui/stationlistpage.h"
+#include "ui/profilepage.h"
+#include "ui/navigationpage.h"
 
 #include <QButtonGroup>
 #include <QHBoxLayout>
@@ -21,14 +24,16 @@ MainWindow::MainWindow(QWidget *parent)
     lay->setSpacing(0);
 
     m_pages = new QStackedWidget(this);
-    m_pages->addWidget(new PlaceholderPage(
-        QStringLiteral("电站列表 / 电站详情\n（B 负责：UC-U-02 ~ 04）"), this));
+    auto *stations = new StationListPage(this);
+    m_pages->addWidget(stations);
     m_chargePage = new ChargePage(this);
     m_pages->addWidget(m_chargePage);
-    m_pages->addWidget(new PlaceholderPage(
-        QStringLiteral("我的订单\n（A 负责：UC-U-10）"), this));
-    m_pages->addWidget(new PlaceholderPage(
-        QStringLiteral("个人中心\n（B 负责：UC-U-01 / 05）"), this));
+    m_ordersPage = new OrdersPage(this);
+    m_pages->addWidget(m_ordersPage);
+    m_profilePage = new ProfilePage(this);
+    m_pages->addWidget(m_profilePage);
+    auto *navigation = new NavigationPage(this);
+    m_pages->addWidget(navigation);
     lay->addWidget(m_pages, 1);
 
     auto *nav = new QWidget(this);
@@ -48,6 +53,13 @@ MainWindow::MainWindow(QWidget *parent)
         nl->addWidget(btn, 1);
     }
     lay->addWidget(nav);
+    connect(stations, &StationListPage::stationSelected, this, &MainWindow::openChargeForStation);
+    connect(m_profilePage, &ProfilePage::logoutRequested, this, &MainWindow::logoutRequested);
+    connect(m_chargePage, &ChargePage::navigationRequested, this, [this, navigation](double lat, double lng, const QString &name) {
+        navigation->setDestination(lat, lng, name);
+        m_pages->setCurrentWidget(navigation);
+    });
+    connect(navigation,&NavigationPage::backRequested,this,[this]{showPage(PageStations);});
 
 #if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
     connect(m_navGroup, &QButtonGroup::idClicked, this, &MainWindow::showPage);
@@ -56,11 +68,8 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::showPage);
 #endif
 
-    // 默认停在充电页；enter() 可能弹提示框，
-    // 不能在构造函数里（窗口还没 show）就阻塞，延迟到事件循环再进
-    m_navGroup->button(PageCharge)->setChecked(true);
-    m_pages->setCurrentIndex(PageCharge);
-    QTimer::singleShot(0, this, [this] { showPage(PageCharge); });
+    m_navGroup->button(PageStations)->setChecked(true);
+    m_pages->setCurrentIndex(PageStations);
 }
 
 void MainWindow::showPage(int page)
@@ -69,6 +78,10 @@ void MainWindow::showPage(int page)
     m_pages->setCurrentIndex(page);
     if (page == PageCharge)
         m_chargePage->enter();     // 每次进入都要做「未完成订单」检查
+    else if (page == PageOrders)
+        m_ordersPage->refresh();
+    else if (page == PageMine)
+        m_profilePage->reload();
 }
 
 void MainWindow::openChargeForStation(int stationId)

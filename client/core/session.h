@@ -18,11 +18,14 @@ public:
     void    setUserId(int id) { m_userId = id; }
     QString token() const { return m_token; }
     void    setToken(const QString &t) { m_token = t; }
+    QString refreshToken() const { return m_refreshToken; }
+    void    setRefreshToken(const QString &t) { m_refreshToken = t; }
 
 private:
     Session() = default;
     int     m_userId = 0;
     QString m_token;
+    QString m_refreshToken;
 };
 
 #endif // SESSION_H

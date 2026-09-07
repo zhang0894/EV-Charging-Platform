@@ -4,6 +4,8 @@
 #include <QWidget>
 
 class ChargePage;
+class OrdersPage;
+class ProfilePage;
 class QButtonGroup;
 class QStackedWidget;
 
@@ -18,6 +20,9 @@ public:
 
     enum Page { PageStations = 0, PageCharge, PageOrders, PageMine };
 
+signals:
+    void logoutRequested();
+
 public slots:
     void showPage(int page);
     void openChargeForStation(int stationId);   // B 的「选桩充电」接这里
@@ -26,6 +31,8 @@ private:
     QStackedWidget *m_pages;
     QButtonGroup   *m_navGroup;
     ChargePage     *m_chargePage;
+    OrdersPage     *m_ordersPage;
+    ProfilePage    *m_profilePage;
 };
 
 #endif // MAINWINDOW_H
