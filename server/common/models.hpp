@@ -555,6 +555,8 @@ struct AdminPileStatusOverviewData {
     double idle_percentage{0.0};
     int fault_count{0};
     double fault_percentage{0.0};
+    int offline_count{0};
+    double offline_percentage{0.0};
     double online_rate{0.0};
 };
 

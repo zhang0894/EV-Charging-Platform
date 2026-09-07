@@ -1306,8 +1306,9 @@
 ---
 
 #### 3. 全网电桩健康与状态分布统计
-- **接口路径**：`GET /api/v1/admin/dashboard/pile-status-overview`
+- **接口路径**：`GET /api/v1/admin/dashboard/pile-status-overview`（别名兼容：`GET /api/v1/admin/dashboard/pile-status`）
 - **认证方式**：`Bearer <admin_token>`
+- **功能说明**：提供全网充电桩运行状态分布统计与健康在线率计算。准确区分硬件故障（`fault_count`）与下线维护（`offline_count`，包括电站下线级联所有电桩以及管理员手动下线的电桩），并实时计算在网可用在线率 `online_rate`（`(in_use + idle) / total * 100%`）。
 - **成功响应 (`200 OK`)**：
   
   ```json
@@ -1315,14 +1316,16 @@
     "code": 0,
     "msg": "success",
     "data": {
-      "total_piles": 100,
-      "in_use_count": 48,
-      "in_use_percentage": 48.0,
-      "idle_count": 46,
-      "idle_percentage": 46.0,
-      "fault_count": 6,
-      "fault_percentage": 6.0,
-      "online_rate": 94.0
+      "total_piles": 150888,
+      "in_use_count": 35848,
+      "in_use_percentage": 23.76,
+      "idle_count": 107550,
+      "idle_percentage": 71.28,
+      "fault_count": 7490,
+      "fault_percentage": 4.96,
+      "offline_count": 0,
+      "offline_percentage": 0.0,
+      "online_rate": 95.04
     },
     "timestamp": 1772607600000
   }

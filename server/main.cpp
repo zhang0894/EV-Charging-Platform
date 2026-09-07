@@ -103,6 +103,7 @@ int main(int argc, char* argv[]) {
     ev::StationPriceManager::instance().init();
     ev::StationPriceManager::instance().load_from_db();
     ev::ChargingStatePool::instance().init_from_seed_piles("data");
+    ev::ChargingStatePool::instance().sync_missing_piles_from_db();
     ev::ChargingStatePool::instance().load_active_reservations_from_db();
     std::println("  [OK] 成功构建 {} 个真实充电站 R-Tree 空间几何索引与 16 个行政区索引", ev::STATIC_STATION_COUNT);
     std::println("  [OK] 成功为全量充电站装载充电桩，恢复活跃预约，状态池初始化就绪");

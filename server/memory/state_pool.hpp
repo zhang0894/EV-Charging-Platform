@@ -16,6 +16,8 @@
 #include <filesystem>
 #include <random>
 #include <iostream>
+#include <cmath>
+#include <print>
 
 namespace ev {
 
@@ -133,11 +135,15 @@ public:
             int64_t total_charge_count{};
             double total_charge_hours{};
             int64_t last_heartbeat_at{};
+            int64_t created_at{};
+            int64_t updated_at{};
         };
 
         std::vector<JsonPile> piles;
-        auto ec = glz::read_json(piles, buf);
+        auto ec = glz::read<glz::opts{.error_on_unknown_keys = false}>(piles, buf);
         if (ec || piles.empty()) {
+            std::cerr << "[StatePool] Warning: Failed to parse seed_piles.json (" 
+                      << glz::format_error(ec, buf) << "), falling back to static stations.\n";
             init_from_static_stations();
             return false;
         }
@@ -180,6 +186,7 @@ public:
                 .type = p.type,
                 .max_power_kw = p.max_power_kw,
                 .status = st,
+                .pre_station_offline_status = (st == "FAULT" || st == "OFFLINE") ? st : "IDLE",
                 .voltage_v = volt,
                 .current_a = curr,
                 .power_kw = chg_power,
@@ -214,6 +221,8 @@ public:
                 active_charging_pile_ids_.insert(p.pile_id);
             }
         }
+        lock.unlock();
+        sync_missing_piles_from_db();
         return true;
     }
 
@@ -773,29 +782,128 @@ public:
         int in_use = 0;
         int idle = 0;
         int fault = 0;
+        int offline = 0;
         int total = static_cast<int>(piles_.size());
 
         for (const auto& [_, p] : piles_) {
             bool st_online = StationStatusManager::instance().is_online(p.station_id);
             std::string st = st_online ? p.status : "OFFLINE";
-            if (st == "CHARGING" || st == "PREPARING" || st == "FINISHING" || st == "RESERVED") in_use++;
-            else if (st == "IDLE") idle++;
-            else if (st == "FAULT" || st == "OFFLINE") fault++;
+            if (st == "CHARGING" || st == "PREPARING" || st == "FINISHING" || st == "RESERVED") {
+                in_use++;
+            } else if (st == "IDLE") {
+                idle++;
+            } else if (st == "FAULT") {
+                fault++;
+            } else if (st == "OFFLINE") {
+                offline++;
+            } else {
+                offline++;
+            }
         }
+
+        auto round2 = [](double v) {
+            return std::round(v * 100.0) / 100.0;
+        };
 
         double in_use_pct = total > 0 ? (static_cast<double>(in_use) / total * 100.0) : 0.0;
         double idle_pct = total > 0 ? (static_cast<double>(idle) / total * 100.0) : 0.0;
         double fault_pct = total > 0 ? (static_cast<double>(fault) / total * 100.0) : 0.0;
+        double offline_pct = total > 0 ? (static_cast<double>(offline) / total * 100.0) : 0.0;
+        double online_rate = total > 0 ? (static_cast<double>(in_use + idle) / total * 100.0) : 0.0;
 
         return AdminPileStatusOverviewData{
             .total_piles = total,
             .in_use_count = in_use,
-            .in_use_percentage = in_use_pct,
+            .in_use_percentage = round2(in_use_pct),
             .idle_count = idle,
-            .idle_percentage = idle_pct,
+            .idle_percentage = round2(idle_pct),
             .fault_count = fault,
-            .fault_percentage = fault_pct
+            .fault_percentage = round2(fault_pct),
+            .offline_count = offline,
+            .offline_percentage = round2(offline_pct),
+            .online_rate = round2(online_rate)
         };
+    }
+
+    void sync_missing_piles_from_db() {
+        if (!DbPool::instance().is_initialized()) return;
+        auto conn = DbPool::instance().acquire_reader();
+        if (!conn) return;
+
+        std::string sql = "SELECT pile_id, station_id, pile_name, type, max_power_kw, total_charge_count, total_charge_hours, last_heartbeat_at FROM piles;";
+        PgResultGuard res(conn->exec(sql.c_str()));
+        if (!res.is_ok()) return;
+
+        int rows = res.rows();
+        int added = 0;
+        int64_t now = current_time_ms();
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        for (int i = 0; i < rows; ++i) {
+            std::string pid = res.value(i, 0);
+            if (piles_.find(pid) == piles_.end()) {
+                int64_t st_id = 0;
+                try { st_id = std::stoll(res.value(i, 1)); } catch (...) {}
+                std::string pname = res.value(i, 2);
+                std::string ptype = res.value(i, 3);
+                double pwr = 120.0;
+                try { pwr = std::stod(res.value(i, 4)); } catch (...) {}
+                int64_t chg_cnt = 0;
+                try { chg_cnt = std::stoll(res.value(i, 5)); } catch (...) {}
+                double chg_hrs = 0.0;
+                try { chg_hrs = std::stod(res.value(i, 6)); } catch (...) {}
+                int64_t hb = 0;
+                try { hb = std::stoll(res.value(i, 7)); } catch (...) {}
+
+                if (st_id >= 1) {
+                    if (static_cast<size_t>(st_id) >= station_pile_ids_.size()) {
+                        station_pile_ids_.resize(st_id + 1);
+                    }
+                    station_pile_ids_[st_id].push_back(pid);
+                }
+
+                piles_[pid] = PileRuntimeState{
+                    .pile_id = pid,
+                    .station_id = st_id,
+                    .pile_name = pname,
+                    .type = ptype,
+                    .max_power_kw = pwr,
+                    .status = "IDLE",
+                    .pre_station_offline_status = "IDLE",
+                    .voltage_v = 0.0,
+                    .current_a = 0.0,
+                    .power_kw = 0.0,
+                    .current_soc = 0,
+                    .temperature_celsius = 25.0,
+                    .charged_energy_kwh = 0.0,
+                    .electricity_price = 1.45,
+                    .electricity_fee_cents = 0,
+                    .service_price = 0.35,
+                    .service_fee_cents = 0,
+                    .is_full = false,
+                    .full_timestamp = 0,
+                    .overtime_grace_minutes = 15,
+                    .overtime_rate_per_15min = 5.00,
+                    .overtime_duration_minutes = 0,
+                    .overtime_fee_cents = 0,
+                    .total_fee_cents = 0,
+                    .active_order_id = "",
+                    .user_id = 0,
+                    .start_time = 0,
+                    .last_update_time = now,
+                    .is_simulated = false,
+                    .reserved_user_id = 0,
+                    .reservation_id = "",
+                    .reservation_expire_time = 0,
+                    .total_charge_count = chg_cnt,
+                    .total_charge_hours = chg_hrs,
+                    .last_heartbeat_at = hb > 0 ? hb : now
+                };
+                added++;
+            }
+        }
+        if (added > 0) {
+            std::println("  [OK] 同步补齐数据库中新增的 {} 个充电桩，当前状态池全量充电桩: {}", added, piles_.size());
+        }
     }
 
     void load_active_reservations_from_db() {

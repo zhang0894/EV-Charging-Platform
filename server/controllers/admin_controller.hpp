@@ -59,16 +59,8 @@ public:
     }
 
     static http::response<http::string_body> handle_get_pile_status_overview() {
-        const std::string cache_key = "cache:admin:pile_status";
-        auto cached = RedisCache::instance().get_json<AdminPileStatusOverviewData>(cache_key);
-        if (cached) {
-            return make_success_response(*cached);
-        }
-
         auto res = DbRepository::instance().get_admin_pile_status_overview();
         if (!res) return make_error_response(res.error());
-
-        RedisCache::instance().set_json(cache_key, *res, 5); // 5s TTL
         return make_success_response(*res);
     }
 
