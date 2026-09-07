@@ -337,6 +337,9 @@ struct ActiveOrderCheckResponseData {
 struct StartChargingRequest {
     std::string pile_id;
     std::string pileId;
+    std::string id;
+    std::string pile_code;
+    std::string code;
     std::string strategy_type{"FULL"};
     double strategy_value{0.0};
     double pre_freeze_amount{50.0};
@@ -471,6 +474,11 @@ struct OrderDetailResponseData {
 struct ReservePileRequest {
     std::string pile_id;
     std::string pileId;
+    std::string id;
+    std::string pile_code;
+    std::string code;
+    int64_t station_id{0};
+    int64_t stationId{0};
 };
 
 struct ReservePileResponseData {
@@ -491,6 +499,7 @@ struct ReservePileResponseData {
 struct CancelReservationRequest {
     std::string reservation_id;
     std::string reservationId;
+    std::string id;
 };
 
 struct CancelReservationResponseData {

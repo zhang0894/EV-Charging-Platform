@@ -16,7 +16,7 @@ data_generator/
 ```
 
 #### 2. 高性能服务端架构 (`server/`)
-服务端采用现代 C++23 标准开发，核心网络层全面接入 **Qt 6 (基于 `QTcpServer` + `QTcpSocket` 的多线程并发事件引擎，方案二深度改造)**，兼具教学架构规范（Qt C++网络编程、信号槽机制与原生 Socket 驱动）与工业级高并发吞吐能力。结合内部微秒级无锁状态池、Boost.Geometry R-Tree 2D 空间索引、PostgreSQL 18 读写分离连接池及 Glaze 编译期反射，对外提供 100% 严格兼容的 RESTful HTTP 接口与 WebSocket 实时遥测流通道。
+服务端采用现代 C++23 标准开发，核心网络层全面接入 **Qt 6 (基于 `QTcpServer` + `QTcpSocket` 的多线程并发事件引擎)**。结合内部微秒级无锁状态池、Boost.Geometry R-Tree 2D 空间索引、PostgreSQL 18 读写分离连接池及 Glaze 编译期反射，对外提供 100% 严格兼容的 RESTful HTTP 接口与 WebSocket 实时遥测流通道。
 ```
 server/
 ├── CMakeLists.txt                      # 跨平台构建脚本 (适配 Windows MSVC 2022 + Qt 6.11.0 / MinGW 与 Linux GCC/Clang，C++23)

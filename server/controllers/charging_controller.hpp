@@ -57,10 +57,16 @@ public:
         const http::request<http::string_body>& req
     ) {
         StartChargingRequest start_req;
-        auto err = glz::read_json(start_req, req.body());
-        if (start_req.pile_id.empty() && !start_req.pileId.empty()) {
-            start_req.pile_id = start_req.pileId;
+        if (!req.body().empty()) {
+            glz::read<glz::opts{.error_on_unknown_keys = false}>(start_req, req.body());
         }
+        if (start_req.pile_id.empty()) {
+            if (!start_req.pileId.empty()) start_req.pile_id = start_req.pileId;
+            else if (!start_req.id.empty()) start_req.pile_id = start_req.id;
+            else if (!start_req.pile_code.empty()) start_req.pile_id = start_req.pile_code;
+            else if (!start_req.code.empty()) start_req.pile_id = start_req.code;
+        }
+        start_req.pile_id = normalize_pile_id(start_req.pile_id);
         if (start_req.station_id <= 0 && start_req.stationId > 0) {
             start_req.station_id = start_req.stationId;
         }
@@ -407,10 +413,13 @@ public:
     ) {
         ReservePileRequest reserve_req;
         if (!req.body().empty()) {
-            glz::read_json(reserve_req, req.body());
+            glz::read<glz::opts{.error_on_unknown_keys = false}>(reserve_req, req.body());
         }
-        if (reserve_req.pile_id.empty() && !reserve_req.pileId.empty()) {
-            reserve_req.pile_id = reserve_req.pileId;
+        if (reserve_req.pile_id.empty()) {
+            if (!reserve_req.pileId.empty()) reserve_req.pile_id = reserve_req.pileId;
+            else if (!reserve_req.id.empty()) reserve_req.pile_id = reserve_req.id;
+            else if (!reserve_req.pile_code.empty()) reserve_req.pile_id = reserve_req.pile_code;
+            else if (!reserve_req.code.empty()) reserve_req.pile_id = reserve_req.code;
         }
         if (reserve_req.pile_id.empty()) {
             std::string_view target = req.target();
@@ -419,21 +428,26 @@ public:
                 std::string_view q = target.substr(q_pos + 1);
                 auto find_param = [&](std::string_view key) -> std::string {
                     size_t pos = q.find(key);
-                    if (pos != std::string_view::npos) {
-                        size_t start = pos + key.size();
-                        if (start < q.size() && q[start] == '=') {
-                            size_t end = q.find('&', start + 1);
-                            return std::string(q.substr(start + 1, (end == std::string_view::npos) ? std::string_view::npos : (end - start - 1)));
+                    while (pos != std::string_view::npos) {
+                        if (pos == 0 || q[pos - 1] == '&') {
+                            size_t start = pos + key.size();
+                            if (start < q.size() && q[start] == '=') {
+                                size_t end = q.find('&', start + 1);
+                                return std::string(q.substr(start + 1, (end == std::string_view::npos) ? std::string_view::npos : (end - start - 1)));
+                            }
                         }
+                        pos = q.find(key, pos + 1);
                     }
                     return "";
                 };
                 reserve_req.pile_id = find_param("pile_id");
-                if (reserve_req.pile_id.empty()) {
-                    reserve_req.pile_id = find_param("pileId");
-                }
+                if (reserve_req.pile_id.empty()) reserve_req.pile_id = find_param("pileId");
+                if (reserve_req.pile_id.empty()) reserve_req.pile_id = find_param("id");
+                if (reserve_req.pile_id.empty()) reserve_req.pile_id = find_param("pile_code");
             }
         }
+
+        reserve_req.pile_id = normalize_pile_id(reserve_req.pile_id);
 
         if (reserve_req.pile_id.empty()) {
             return make_error_response(AppError::InvalidJsonPayload, "Missing or invalid pile_id");
@@ -503,10 +517,11 @@ public:
     ) {
         CancelReservationRequest cancel_req;
         if (!req.body().empty()) {
-            glz::read_json(cancel_req, req.body());
+            glz::read<glz::opts{.error_on_unknown_keys = false}>(cancel_req, req.body());
         }
-        if (cancel_req.reservation_id.empty() && !cancel_req.reservationId.empty()) {
-            cancel_req.reservation_id = cancel_req.reservationId;
+        if (cancel_req.reservation_id.empty()) {
+            if (!cancel_req.reservationId.empty()) cancel_req.reservation_id = cancel_req.reservationId;
+            else if (!cancel_req.id.empty()) cancel_req.reservation_id = cancel_req.id;
         }
         if (cancel_req.reservation_id.empty()) {
             std::string_view target = req.target();
@@ -515,20 +530,27 @@ public:
                 std::string_view q = target.substr(q_pos + 1);
                 auto find_param = [&](std::string_view key) -> std::string {
                     size_t pos = q.find(key);
-                    if (pos != std::string_view::npos) {
-                        size_t start = pos + key.size();
-                        if (start < q.size() && q[start] == '=') {
-                            size_t end = q.find('&', start + 1);
-                            return std::string(q.substr(start + 1, (end == std::string_view::npos) ? std::string_view::npos : (end - start - 1)));
+                    while (pos != std::string_view::npos) {
+                        if (pos == 0 || q[pos - 1] == '&') {
+                            size_t start = pos + key.size();
+                            if (start < q.size() && q[start] == '=') {
+                                size_t end = q.find('&', start + 1);
+                                return std::string(q.substr(start + 1, (end == std::string_view::npos) ? std::string_view::npos : (end - start - 1)));
+                            }
                         }
+                        pos = q.find(key, pos + 1);
                     }
                     return "";
                 };
                 cancel_req.reservation_id = find_param("reservation_id");
-                if (cancel_req.reservation_id.empty()) {
-                    cancel_req.reservation_id = find_param("reservationId");
-                }
+                if (cancel_req.reservation_id.empty()) cancel_req.reservation_id = find_param("reservationId");
+                if (cancel_req.reservation_id.empty()) cancel_req.reservation_id = find_param("id");
             }
+        }
+        size_t first = cancel_req.reservation_id.find_first_not_of(" \t\r\n\"'");
+        if (first != std::string::npos) {
+            size_t last = cancel_req.reservation_id.find_last_not_of(" \t\r\n\"'");
+            cancel_req.reservation_id = cancel_req.reservation_id.substr(first, last - first + 1);
         }
 
         auto res = DbRepository::instance().cancel_reservation(user_id, cancel_req.reservation_id);

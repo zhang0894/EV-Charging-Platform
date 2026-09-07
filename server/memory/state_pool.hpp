@@ -82,6 +82,17 @@ struct StationPileSummary {
     bool has_fast_pile{false};
 };
 
+inline std::string normalize_pile_id(std::string_view pid) {
+    size_t first = pid.find_first_not_of(" \t\r\n\"'");
+    if (first == std::string_view::npos) return "";
+    size_t last = pid.find_last_not_of(" \t\r\n\"'");
+    std::string s(pid.substr(first, last - first + 1));
+    if (!s.empty() && (s[0] == 'p' || s[0] == 'P')) {
+        s[0] = 'P';
+    }
+    return s;
+}
+
 class ChargingStatePool {
 public:
     static ChargingStatePool& instance() {
@@ -380,29 +391,64 @@ public:
     }
 
     std::optional<PileRuntimeState> get_pile_state(std::string_view pile_id) const {
-        std::shared_lock<std::shared_mutex> lock(mutex_);
-        auto it = piles_.find(std::string(pile_id));
-        if (it != piles_.end()) {
-            PileRuntimeState p = it->second;
-            if (!StationStatusManager::instance().is_online(p.station_id)) {
-                p.status = "OFFLINE";
-                p.voltage_v = 0.0;
-                p.current_a = 0.0;
-                p.power_kw = 0.0;
+        std::string norm = normalize_pile_id(pile_id);
+        if (norm.empty()) return std::nullopt;
+
+        {
+            std::shared_lock<std::shared_mutex> lock(mutex_);
+            auto it = piles_.find(norm);
+            if (it != piles_.end()) {
+                PileRuntimeState p = it->second;
+                if (!StationStatusManager::instance().is_online(p.station_id)) {
+                    p.status = "OFFLINE";
+                    p.voltage_v = 0.0;
+                    p.current_a = 0.0;
+                    p.power_kw = 0.0;
+                }
+                return p;
             }
-            return p;
         }
+
+        // 内存未命中，触发从数据库按需懒加载兜底
+        auto db_state = sync_single_pile_from_db(norm);
+        if (db_state) {
+            if (!StationStatusManager::instance().is_online(db_state->station_id)) {
+                db_state->status = "OFFLINE";
+                db_state->voltage_v = 0.0;
+                db_state->current_a = 0.0;
+                db_state->power_kw = 0.0;
+            }
+            return db_state;
+        }
+
         return std::nullopt;
     }
 
     std::string_view get_pile_status(std::string_view pile_id) const {
-        std::shared_lock<std::shared_mutex> lock(mutex_);
-        auto it = piles_.find(std::string(pile_id));
-        if (it != piles_.end()) {
-            if (!StationStatusManager::instance().is_online(it->second.station_id)) {
-                return "OFFLINE";
+        std::string norm = normalize_pile_id(pile_id);
+        if (norm.empty()) return "IDLE";
+
+        {
+            std::shared_lock<std::shared_mutex> lock(mutex_);
+            auto it = piles_.find(norm);
+            if (it != piles_.end()) {
+                if (!StationStatusManager::instance().is_online(it->second.station_id)) {
+                    return "OFFLINE";
+                }
+                return it->second.status;
             }
-            return it->second.status;
+        }
+
+        sync_single_pile_from_db(norm);
+        {
+            std::shared_lock<std::shared_mutex> lock(mutex_);
+            auto it = piles_.find(norm);
+            if (it != piles_.end()) {
+                if (!StationStatusManager::instance().is_online(it->second.station_id)) {
+                    return "OFFLINE";
+                }
+                return it->second.status;
+            }
         }
         return "IDLE";
     }
@@ -624,9 +670,16 @@ public:
     }
 
     bool reserve_pile(std::string_view pile_id, int64_t user_id, std::string_view reservation_id, int64_t expire_time) {
+        std::string norm = normalize_pile_id(pile_id);
         std::unique_lock<std::shared_mutex> lock(mutex_);
-        auto it = piles_.find(std::string(pile_id));
-        if (it == piles_.end()) return false;
+        auto it = piles_.find(norm);
+        if (it == piles_.end()) {
+            lock.unlock();
+            sync_single_pile_from_db(norm);
+            lock.lock();
+            it = piles_.find(norm);
+            if (it == piles_.end()) return false;
+        }
         if (it->second.status != "IDLE" && (it->second.status != "RESERVED" || it->second.reserved_user_id != user_id)) return false;
 
         it->second.status = "RESERVED";
@@ -639,8 +692,9 @@ public:
     }
 
     bool release_reserved_pile(std::string_view pile_id) {
+        std::string norm = normalize_pile_id(pile_id);
         std::unique_lock<std::shared_mutex> lock(mutex_);
-        auto it = piles_.find(std::string(pile_id));
+        auto it = piles_.find(norm);
         if (it == piles_.end()) return false;
         if (it->second.status == "RESERVED") {
             it->second.status = "IDLE";
@@ -823,6 +877,88 @@ public:
             .offline_percentage = round2(offline_pct),
             .online_rate = round2(online_rate)
         };
+    }
+
+    std::optional<PileRuntimeState> sync_single_pile_from_db(std::string_view pile_id) const {
+        if (!DbPool::instance().is_initialized()) return std::nullopt;
+        auto conn = DbPool::instance().acquire_reader();
+        if (!conn) return std::nullopt;
+
+        std::string clean_id = normalize_pile_id(pile_id);
+        if (clean_id.empty()) return std::nullopt;
+
+        std::string sql = std::format(
+            "SELECT pile_id, station_id, pile_name, type, max_power_kw, total_charge_count, total_charge_hours, last_heartbeat_at "
+            "FROM piles WHERE pile_id = '{}' OR LOWER(pile_id) = LOWER('{}') LIMIT 1;",
+            clean_id, clean_id
+        );
+        PgResultGuard res(conn->exec(sql.c_str()));
+        if (!res.is_ok() || res.rows() == 0) return std::nullopt;
+
+        std::string pid = res.value(0, 0);
+        int64_t st_id = 0;
+        try { st_id = std::stoll(res.value(0, 1)); } catch (...) {}
+        std::string pname = res.value(0, 2);
+        std::string ptype = res.value(0, 3);
+        double pwr = 120.0;
+        try { pwr = std::stod(res.value(0, 4)); } catch (...) {}
+        int64_t chg_cnt = 0;
+        try { chg_cnt = std::stoll(res.value(0, 5)); } catch (...) {}
+        double chg_hrs = 0.0;
+        try { chg_hrs = std::stod(res.value(0, 6)); } catch (...) {}
+        int64_t hb = 0;
+        try { hb = std::stoll(res.value(0, 7)); } catch (...) {}
+        int64_t now = current_time_ms();
+
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        if (st_id >= 1) {
+            if (static_cast<size_t>(st_id) >= station_pile_ids_.size()) {
+                station_pile_ids_.resize(st_id + 1);
+            }
+            if (std::find(station_pile_ids_[st_id].begin(), station_pile_ids_[st_id].end(), pid) == station_pile_ids_[st_id].end()) {
+                station_pile_ids_[st_id].push_back(pid);
+            }
+        }
+
+        PileRuntimeState state{
+            .pile_id = pid,
+            .station_id = st_id,
+            .pile_name = pname,
+            .type = ptype,
+            .max_power_kw = pwr,
+            .status = "IDLE",
+            .pre_station_offline_status = "IDLE",
+            .voltage_v = 0.0,
+            .current_a = 0.0,
+            .power_kw = 0.0,
+            .current_soc = 0,
+            .temperature_celsius = 25.0,
+            .charged_energy_kwh = 0.0,
+            .electricity_price = 1.45,
+            .electricity_fee_cents = 0,
+            .service_price = 0.35,
+            .service_fee_cents = 0,
+            .is_full = false,
+            .full_timestamp = 0,
+            .overtime_grace_minutes = 15,
+            .overtime_rate_per_15min = 5.00,
+            .overtime_duration_minutes = 0,
+            .overtime_fee_cents = 0,
+            .total_fee_cents = 0,
+            .active_order_id = "",
+            .user_id = 0,
+            .start_time = 0,
+            .last_update_time = now,
+            .is_simulated = false,
+            .reserved_user_id = 0,
+            .reservation_id = "",
+            .reservation_expire_time = 0,
+            .total_charge_count = chg_cnt,
+            .total_charge_hours = chg_hrs,
+            .last_heartbeat_at = hb > 0 ? hb : now
+        };
+        piles_[pid] = state;
+        return state;
     }
 
     void sync_missing_piles_from_db() {
@@ -1046,9 +1182,9 @@ public:
 
 private:
     ChargingStatePool() = default;
-    std::unordered_map<std::string, PileRuntimeState> piles_;
+    mutable std::unordered_map<std::string, PileRuntimeState> piles_;
     std::unordered_set<std::string> active_charging_pile_ids_;
-    std::vector<std::vector<std::string>> station_pile_ids_;
+    mutable std::vector<std::vector<std::string>> station_pile_ids_;
     mutable std::shared_mutex mutex_;
 };
 
