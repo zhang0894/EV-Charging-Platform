@@ -263,9 +263,11 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
         int64_t uid = claims->user_id;
 
         // 用户资料
-        if (path == "/api/v1/user/profile") {
+        if (path == "/api/v1/user/profile" || path == "/api/v1/user/nickname") {
             if (method == http::verb::get) return UserController::handle_get_profile(uid);
-            if (method == http::verb::put) return UserController::handle_update_profile(uid, req);
+            if (method == http::verb::put || method == http::verb::post || method == http::verb::patch) {
+                return UserController::handle_update_profile(uid, req);
+            }
         }
         if (path == "/api/v1/user/avatar") {
             if (method == http::verb::get) return UserController::handle_get_avatar(uid, req);

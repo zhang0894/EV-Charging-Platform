@@ -183,7 +183,14 @@ struct RefreshTokenRequest {
 
 struct UpdateProfileRequest {
     std::string nickname;
+    std::string name;
     std::string avatar_url;
+};
+
+struct UpdateProfileResponseData {
+    int64_t user_id{0};
+    std::string nickname;
+    int64_t updated_at{0};
 };
 
 struct UploadAvatarRequest {

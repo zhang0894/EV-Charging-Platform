@@ -227,9 +227,15 @@ Result<void> DbRepository::update_user_nickname(int64_t user_id, std::string_vie
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int64_t now = current_time_ms();
-    std::string sql = std::format("UPDATE users SET nickname = '{}', updated_at = {} WHERE user_id = {};", nickname, now, user_id);
-    PgResultGuard res(conn->exec(sql.c_str()));
+    conn->prepare("stmt_update_user_nickname", "UPDATE users SET nickname = $1, updated_at = $2 WHERE user_id = $3;", 3);
+    std::string nick_str(nickname);
+    std::string now_str = std::to_string(now);
+    std::string uid_str = std::to_string(user_id);
+    const char* params[3] = { nick_str.c_str(), now_str.c_str(), uid_str.c_str() };
+    PgResultGuard res(conn->exec_prepared("stmt_update_user_nickname", 3, params));
     if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
+
+    RedisCache::instance().del(std::format("cache:user:model:{}", user_id));
     return {};
 }
 
@@ -238,9 +244,15 @@ Result<std::string> DbRepository::update_user_avatar(int64_t user_id, std::strin
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int64_t now = current_time_ms();
-    std::string sql = std::format("UPDATE users SET avatar_url = '{}', updated_at = {} WHERE user_id = {};", avatar_url, now, user_id);
-    PgResultGuard res(conn->exec(sql.c_str()));
+    conn->prepare("stmt_update_user_avatar", "UPDATE users SET avatar_url = $1, updated_at = $2 WHERE user_id = $3;", 3);
+    std::string url_str(avatar_url);
+    std::string now_str = std::to_string(now);
+    std::string uid_str = std::to_string(user_id);
+    const char* params[3] = { url_str.c_str(), now_str.c_str(), uid_str.c_str() };
+    PgResultGuard res(conn->exec_prepared("stmt_update_user_avatar", 3, params));
     if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
+
+    RedisCache::instance().del(std::format("cache:user:model:{}", user_id));
     return std::string(avatar_url);
 }
 
@@ -370,9 +382,15 @@ Result<void> DbRepository::update_user_status(int64_t user_id, int status) {
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int64_t now = current_time_ms();
-    std::string sql = std::format("UPDATE users SET status = {}, updated_at = {} WHERE user_id = {};", status, now, user_id);
-    PgResultGuard res(conn->exec(sql.c_str()));
+    conn->prepare("stmt_update_user_status", "UPDATE users SET status = $1, updated_at = $2 WHERE user_id = $3;", 3);
+    std::string st_str = std::to_string(status);
+    std::string now_str = std::to_string(now);
+    std::string uid_str = std::to_string(user_id);
+    const char* params[3] = { st_str.c_str(), now_str.c_str(), uid_str.c_str() };
+    PgResultGuard res(conn->exec_prepared("stmt_update_user_status", 3, params));
     if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
+
+    RedisCache::instance().del(std::format("cache:user:model:{}", user_id));
     return {};
 }
 

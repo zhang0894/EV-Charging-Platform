@@ -45,17 +45,33 @@ public:
 
     static http::response<http::string_body> handle_update_profile(int64_t user_id, const http::request<http::string_body>& req) {
         UpdateProfileRequest p_req;
-        auto err = glz::read_json(p_req, req.body());
-        if (err || p_req.nickname.empty()) {
-            return make_error_response(AppError::InvalidJsonPayload, "Missing nickname");
+        auto err = glz::read<glz::opts{.error_on_unknown_keys = false}>(p_req, req.body());
+        std::string new_nickname = !p_req.nickname.empty() ? p_req.nickname : p_req.name;
+        if (err || (new_nickname.empty() && p_req.avatar_url.empty())) {
+            return make_error_response(AppError::InvalidJsonPayload, "Missing nickname or avatar_url");
         }
 
-        auto res = DbRepository::instance().update_user_nickname(user_id, p_req.nickname);
-        if (!res) {
-            return make_error_response(res.error());
+        if (!new_nickname.empty()) {
+            auto res = DbRepository::instance().update_user_nickname(user_id, new_nickname);
+            if (!res) {
+                return make_error_response(res.error());
+            }
         }
 
-        return make_empty_success_response();
+        if (!p_req.avatar_url.empty()) {
+            auto res = DbRepository::instance().update_user_avatar(user_id, p_req.avatar_url);
+            if (!res) {
+                return make_error_response(res.error());
+            }
+        }
+
+        int64_t now = current_time_ms();
+        UpdateProfileResponseData data{
+            .user_id = user_id,
+            .nickname = new_nickname,
+            .updated_at = now
+        };
+        return make_success_response(data);
     }
 
     static http::response<http::string_body> handle_change_password(int64_t user_id, const http::request<http::string_body>& req) {
