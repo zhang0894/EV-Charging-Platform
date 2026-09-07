@@ -770,21 +770,21 @@
     - 若**提供**：返回该充电站所属的充电桩列表（单站充电桩生成数量为 5~30 根）。
   - `page` (可选, 默认 `1`, 最小 `1`): 当前分页页码。
   - `page_size` (可选, 默认 `30`, 上限 `30`): 每页条数（根据电站充电桩生成规模规则，单站最多 30 根桩，服务端强制截断上限为 30，若传入大于 30 则按 30 返回）。
-  - `status` (可选, 字符串或数字编码): 按充电桩实时状态过滤。支持系统全量 8 种状态，支持多种参数格式传入：
-    - 状态全集覆盖：
+  - `status` (可选, 字符串或数字编码): 按充电桩实时状态过滤。支持系统全量 7 种有效状态，支持多种参数格式传入：
+    - 状态全集覆盖（已彻底移除冗余的 MAINTENANCE 维护状态）：
       - `1` / `"IDLE"` / `"空闲"`：空闲可用（可直接启动充电或发起预约）
       - `2` / `"PREPARING"` / `"准备中"`：车辆已插枪准备中
       - `3` / `"CHARGING"` / `"充电中"`：正在充电中
       - `4` / `"FINISHING"` / `"充电完成"`：充电结束待拔枪
       - `5` / `"FAULT"` / `"故障"`：桩机故障停用
-      - `6` / `"MAINTENANCE"` / `"维护中"`：检修维护中
-      - `7` / `"OFFLINE"` / `"离线"`：通讯离线或电站整体下线
+      - `7` / `"OFFLINE"` / `"离线"`：下线停用、通讯离线或电站整体下线
       - `8` / `"RESERVED"` / `"已预约"` / `"已预约锁定"`：已被用户预约锁定
   - `type` (可选, 字符串或数字编码): 按充电桩类型过滤。支持快充与慢充：
     - 快充：`"FAST"`、`"快充"`、`1`
     - 慢充：`"SLOW"`、`"慢充"`、`2`
 - **业务逻辑与实时状态同步**：
   - **动态状态同步**：接口返回的充电桩状态与内存实时遥测状态池（`ChargingStatePool`）以及预约锁定表实时联动。若桩位被用户预约（状态变为 `RESERVED`）或进入充电（状态变为 `CHARGING`），查询结果和空闲过滤即刻精确反映最新动态，杜绝脏读。
+  - **电站下线级联感知**：若指定充电站处于下线状态（`is_online = false`），则查询该电站下所有充电桩一律呈现为 `OFFLINE`（状态码 7），空闲可用桩数统计自动降为 0；在电站恢复上线后，各个充电桩将保真恢复至下线前的各自独立状态（`IDLE`、`FAULT`、`OFFLINE`）。
   - **返回格式对齐**：返回格式与原 `/api/v1/admin/piles` 保持 100% 格式对齐，兼容前端现有字段解析。
 - **成功响应 (`200 OK`)**：
   ```json
@@ -1309,6 +1309,7 @@
 - **接口路径**：`GET /api/v1/admin/dashboard/pile-status-overview`
 - **认证方式**：`Bearer <admin_token>`
 - **成功响应 (`200 OK`)**：
+  
   ```json
   {
     "code": 0,
@@ -1465,6 +1466,7 @@
 ### 3.4 充电桩监控与远程管控 (CRUD & 远程指令)
 
 #### 1. 分页查询全网充电桩列表 (接口已升级统一)
+
 > **接口变更通知**：  
 > 原有的管理端私有接口 `GET /api/v1/admin/piles` 已全面废弃并删除（调用返回 `404 Not Found`）。  
 > 充电桩查询功能已统一升级为全平台通用的 **`GET /api/v1/piles`**（详见 [2.3.3 充电桩综合多维检索与实时状态查询](#3-充电桩综合多维检索与实时状态查询-全平台统一桩位接口)）。  
@@ -1507,6 +1509,8 @@
 #### 3. 远程下发重启指令 (模拟处理死机异常)
 - **接口路径**：`POST /api/v1/admin/piles/{pile_id}/restart`
 - **认证方式**：`Bearer <admin_token>`
+- **业务约束**：
+  - 若充电桩所属的充电站处于下线状态（`is_online = false`），服务端严格阻断重启指令，返回 HTTP 404，业务错误码 `20001 StationNotFound`，错误提示 `"充电站已下线，禁止重启充电桩"`。
 - **请求参数**：
   - Request Body:
     ```json
@@ -1524,7 +1528,7 @@
       "command": "REBOOT",
       "execution_status": "SUCCESS",
       "new_status": "IDLE",
-      "message": "Remote restart signal delivered and acknowledged"
+      "message": "Remote reboot command executed successfully"
     },
     "timestamp": 1772607600000
   }
@@ -1532,15 +1536,19 @@
 
 ---
 
-#### 4. 远程设备状态切换 / 锁定维护
+#### 4. 远程设备状态切换 (单桩下线停用 / 上线就绪)
 - **接口路径**：`POST /api/v1/admin/piles/{pile_id}/set-status`
 - **认证方式**：`Bearer <admin_token>`
+- **业务约束与状态切换规则**：
+  - **允许目标状态**：仅允许将充电桩设置为 **`OFFLINE`**（下线停用）或恢复为 **`IDLE`**（上线就绪）。若传入已被移除的 `MAINTENANCE` 或其他无效状态，服务端直接拒绝并返回 HTTP 400 (`code: 40003 InvalidJsonPayload` 或 `"Invalid target status. Only OFFLINE or IDLE are permitted"`)。
+  - **所属电站下线保护**：若该充电桩所属的充电站处于下线状态，服务端**严格拒绝**修改其下任何充电桩状态，返回 HTTP 404，业务错误码 `20001 StationNotFound`，错误提示 `"充电站已下线，禁止修改其下充电桩状态"`。
+  - **订单与预约优雅终止**：当管理员将充电桩置为 `OFFLINE` 时，若桩端存在进行中的充电订单，服务端将自动强制停止充电、计算电费与占位费并扣划钱包完成结算，同时广播 `CHARGING_FINISHED`；若存在进行中的预约，服务端将自动解除预约锁定并退还押金。
 - **请求参数**：
-  - Request Body:
+  - Request Body (支持 `target_status` 或 `status` 字段):
     ```json
     {
-      "target_status": "MAINTENANCE",
-      "reason": "桩位定期绝缘检测"
+      "target_status": "OFFLINE",
+      "reason": "桩位定期绝缘检修与系统维护"
     }
     ```
 - **成功响应 (`200 OK`)**：
@@ -1551,7 +1559,7 @@
     "data": {
       "pile_id": "P10101",
       "previous_status": "IDLE",
-      "current_status": "MAINTENANCE"
+      "current_status": "OFFLINE"
     },
     "timestamp": 1772607600000
   }
@@ -2014,6 +2022,7 @@
   }
   ```
 - **硬件故障告警事件广播 (Server -> Admin)**：
+  
   ```json
   {
     "event": "DEVICE_FAULT_ALARM",

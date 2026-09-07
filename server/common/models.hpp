@@ -679,8 +679,10 @@ struct PileRestartResponseData {
 };
 
 struct PileStatusChangeRequest {
-    std::string target_status{"MAINTENANCE"};
-    std::string reason{"桩位定期维护"};
+    std::string target_status{"OFFLINE"};
+    std::string status{""};
+    std::string action{""};
+    std::string reason{"设备下线维护"};
 };
 
 struct PileStatusChangeResponseData {

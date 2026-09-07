@@ -3,8 +3,8 @@
 
 ## 核心架构与业务规范文档
 
-- **[充电站与充电桩数据存储与业务逻辑规范](./充电站与充电桩数据存储与业务逻辑规范.md)**：深入阐述 L1 内存状态池 (`ChargingStatePool`) 与 L2 PostgreSQL 数据库的分层存储模型、移除数据库 `piles.status` 彻底消除脏数据与预约锁死、充电桩 8 种标准化运行状态机、高并发原子抢占式预约生命周期与 500ms 动态仿真业务规范。
-- **[API 设计与端口规范文档](./API设计文档.md)**：全系统 RESTful API 与 WebSocket 实时流详细协议定义（含 `GET /api/v1/stations/inquire` 多维综合查询新增的 `status` 与 `fast_pile` 筛选能力）。
+- **[充电站与充电桩数据存储与业务逻辑规范](./充电站与充电桩数据存储与业务逻辑规范.md)**：深入阐述 L1 内存状态池 (`ChargingStatePool`) 与 L2 PostgreSQL 数据库的分层存储模型、移除数据库 `piles.status` 彻底消除脏数据与预约锁死、充电桩 7 种核心有效运行状态机（彻底移除冗余的 MAINTENANCE 维护态）、电站下线全桩级联呈现为 OFFLINE 与上线保真恢复（IDLE/FAULT/OFFLINE）、高并发原子抢占式预约生命周期与 500ms 动态仿真业务规范。
+- **[API 设计与端口规范文档](./API设计文档.md)**：全系统 RESTful API 与 WebSocket 实时流详细协议定义（含 `GET /api/v1/stations/inquire` 多维综合查询新增的 `status` 与 `fast_pile` 筛选能力、`GET /api/v1/piles` 全量 7 种有效状态与电站下线级联感知、`POST /api/v1/admin/piles/{id}/set-status` 仅支持单桩 OFFLINE/IDLE 切换及电站下线保护拦截）。
 
 ## 项目结构介绍 (Server 服务端 & Data Generator 数据管线)
 
@@ -27,7 +27,7 @@ server/
 │   ├── redis_cache.hpp                 # 集中缓存接口定义 (支持 TTL、Write-Invalidated 缓存与离线热降级)
 │   └── redis_cache.cpp                 # 基于原生 Socket/hiredis 协议的异步/同步缓存实现，当 Redis 离线时无缝切换为进程内高并发读写锁内存缓存
 ├── common/                             # 领域实体模型与公共工具组件
-│   ├── types.hpp                       # 全局枚举 (PileStatus 包含 RESERVED=8, ReservationStatus, OrderStatus, FlowType 包含押金支付与退款) 与分/元金额精准转换工具
+│   ├── types.hpp                       # 全局枚举 (PileStatus 移除 MAINTENANCE，保留 IDLE/PREPARING/CHARGING/FINISHING/FAULT/OFFLINE/RESERVED) 与分/元精准换算
 │   ├── error.hpp                       # std::expected 错误模型、10001~50006 业务错误码与 HTTP 状态码映射表
 │   ├── models.hpp                      # 全量领域模型实体与全部接口请求/响应 DTO (预约模型、手机号校验模型、Glaze 编译期反射序列化)
 │   ├── auth_token.hpp                  # Bearer Token 签名生成与基于 std::string_view 的无堆分配鉴权校验器
@@ -35,9 +35,9 @@ server/
 ├── controllers/                        # 业务控制器层 (纯业务逻辑与无状态处理)
 │   ├── auth_controller.hpp             # 认证控制器：免鉴权手机号已注册核验(check-phone)、手机号免密登录(未注册返回10001)、账号密码注册(自动登录/手机号唯一校验)、手机号密码登录、修改密码、管理员登录、Token刷新
 │   ├── user_controller.hpp             # 用户控制器：个人中心资料查询与修改、修改密码、钱包资产查询、幂等充值、资金变动流水明细
-│   ├── station_controller.hpp          # 电站与电桩控制器：多维综合查询(inquire，支持站名模糊、行政区限定、经纬度距离排序与严格分页)、精简单站卡片详情、单站销售业绩多维统计、全网/单站充电桩综合分页查询(piles，覆盖8种实时状态动态同步)
+│   ├── station_controller.hpp          # 电站与电桩控制器：多维综合查询(inquire，支持站名模糊、行政区限定、经纬度距离排序与严格分页)、精简单站卡片详情、单站销售业绩多维统计、全网/单站充电桩综合分页查询(piles，覆盖有效状态动态同步与电站下线级联感知)
 │   ├── charging_controller.hpp         # 充电核心控制器：充电桩预约(20元押金锁定)、取消预约(5元手续费/15元退还)、有效预约单查询、到场扫码充电自动履约全额退还20元押金、启动充电、主动停止、行级排他锁资金结算、订单明细
-│   └── admin_controller.hpp            # 管理员控制器：运营态势大盘看板、营收趋势、电站上线/下线与订单同步结算、电桩新增(POST /piles)、远程重启/维护指令、用户风控/调账、全局订单审计、一键退款
+│   └── admin_controller.hpp            # 管理员控制器：运营态势大盘看板、营收趋势、电站上线/下线与订单同步结算与充电桩状态保真恢复、电桩新增(POST /piles)、电桩上下线切换(POST /set-status 仅限 OFFLINE/IDLE，电站下线时拒绝修改并返回 20001)、远程重启(电站下线时阻断)、用户风控/调账、全局订单审计、一键退款
 ├── data/                               # 真实北京充电站与初始业务数据资产
 │   ├── beijing_charging_stations.json  # 高德 API 采集的全北京市 8,569 座真实充电站原始数据
 │   ├── stations_processed.json         # 经过 prepare_data.py 清洗与行政区(0~15)紧凑编码后的标准化电站 JSON
@@ -54,7 +54,7 @@ server/
 │   └── seed_data.hpp / .cpp            # 业务初始数据导入与检测器 (支持从 data/*.json 高效批量入库与一键清空重置)
 ├── memory/                             # 进程内高性能内存池与空间几何索引 (L1 级存储)
 │   ├── rtree_index.hpp                 # Boost.Geometry R-Tree 2D 空间几何索引 (基于编译期常量建立，搜桩 0 次查库，自适应动态半径保证≥3座可用电站)
-│   ├── state_pool.hpp                  # 活跃电桩遥测状态池 (无锁读写保护、各站1号桩保活IDLE、25%模拟动态占用与预约锁定释放管理)
+│   ├── state_pool.hpp                  # 活跃电桩遥测状态池 (无锁读写保护、各站1号桩保活IDLE、25%模拟动态占用与预约锁定释放管理、电站下线级联与上线状态保真还原快照 pre_station_offline_status)
 │   └── station_status_manager.hpp      # 电站上下线实时状态管理器 (内存位图与哈希表维护电站运营状态，下线时阻断新订单)
 ├── router/                             # 路由分发层
 │   └── http_router.hpp / .cpp          # 静态化正则预编译、Token 零拷贝解析与 RESTful 全量路由分发中心

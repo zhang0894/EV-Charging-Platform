@@ -4,6 +4,7 @@
 #include "../common/models.hpp"
 #include "../data/static_stations.hpp"
 #include "../db/db_pool.hpp"
+#include "station_status_manager.hpp"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -24,7 +25,8 @@ struct PileRuntimeState {
     std::string pile_name;
     std::string type{"FAST"}; // FAST, SLOW
     double max_power_kw{120.0};
-    std::string status{"IDLE"}; // IDLE, CHARGING, FAULT, MAINTENANCE, OFFLINE
+    std::string status{"IDLE"}; // IDLE, CHARGING, FAULT, OFFLINE
+    std::string pre_station_offline_status{"IDLE"}; // 记录电站下线前各个充电桩的状态 (IDLE / FAULT / OFFLINE)
 
     // 实时遥测指标
     double voltage_v{0.0};
@@ -264,6 +266,7 @@ public:
                     .type = ptype,
                     .max_power_kw = power,
                     .status = st,
+                    .pre_station_offline_status = (st == "FAULT" || st == "OFFLINE") ? st : "IDLE",
                     .voltage_v = volt,
                     .current_a = curr,
                     .power_kw = chg_power,
@@ -371,7 +374,14 @@ public:
         std::shared_lock<std::shared_mutex> lock(mutex_);
         auto it = piles_.find(std::string(pile_id));
         if (it != piles_.end()) {
-            return it->second;
+            PileRuntimeState p = it->second;
+            if (!StationStatusManager::instance().is_online(p.station_id)) {
+                p.status = "OFFLINE";
+                p.voltage_v = 0.0;
+                p.current_a = 0.0;
+                p.power_kw = 0.0;
+            }
+            return p;
         }
         return std::nullopt;
     }
@@ -380,6 +390,9 @@ public:
         std::shared_lock<std::shared_mutex> lock(mutex_);
         auto it = piles_.find(std::string(pile_id));
         if (it != piles_.end()) {
+            if (!StationStatusManager::instance().is_online(it->second.station_id)) {
+                return "OFFLINE";
+            }
             return it->second.status;
         }
         return "IDLE";
@@ -388,6 +401,18 @@ public:
     std::vector<PileRuntimeState> get_piles_by_station(int64_t station_id) const {
         std::shared_lock<std::shared_mutex> lock(mutex_);
         std::vector<PileRuntimeState> result;
+        bool station_online = StationStatusManager::instance().is_online(station_id);
+
+        auto add_pile = [&](const PileRuntimeState& src) {
+            PileRuntimeState p = src;
+            if (!station_online) {
+                p.status = "OFFLINE";
+                p.voltage_v = 0.0;
+                p.current_a = 0.0;
+                p.power_kw = 0.0;
+            }
+            result.push_back(std::move(p));
+        };
 
         if (station_id >= 1 && static_cast<size_t>(station_id) < station_pile_ids_.size()) {
             const auto& pids = station_pile_ids_[station_id];
@@ -395,13 +420,13 @@ public:
             for (const auto& pid : pids) {
                 auto it = piles_.find(pid);
                 if (it != piles_.end()) {
-                    result.push_back(it->second);
+                    add_pile(it->second);
                 }
             }
         } else {
             for (const auto& [_, p] : piles_) {
                 if (p.station_id == station_id) {
-                    result.push_back(p);
+                    add_pile(p);
                 }
             }
         }
@@ -415,21 +440,24 @@ public:
     StationPileSummary get_station_pile_summary(int64_t station_id) const {
         std::shared_lock<std::shared_mutex> lock(mutex_);
         StationPileSummary sum;
+        bool station_online = StationStatusManager::instance().is_online(station_id);
 
         auto check_pile = [&](const PileRuntimeState& p) {
             sum.total_piles++;
             if (p.type == "FAST") sum.has_fast_pile = true;
 
-            if (p.status == "IDLE") {
+            std::string st = station_online ? p.status : "OFFLINE";
+
+            if (st == "IDLE") {
                 sum.idle_piles++;
                 if (p.type == "FAST") sum.fast_piles_idle++;
                 else sum.slow_piles_idle++;
-            } else if (p.status == "CHARGING" || p.status == "PREPARING" || p.status == "FINISHING") {
+            } else if (st == "CHARGING" || st == "PREPARING" || st == "FINISHING") {
                 sum.busy_piles++;
-            } else if (p.status == "RESERVED") {
+            } else if (st == "RESERVED") {
                 sum.busy_piles++;
                 sum.reserved_piles++;
-            } else if (p.status == "FAULT" || p.status == "MAINTENANCE" || p.status == "OFFLINE") {
+            } else if (st == "FAULT" || st == "OFFLINE") {
                 sum.fault_piles++;
             }
         };
@@ -472,6 +500,14 @@ public:
             for (const auto& pid : station_pile_ids_[station_id]) {
                 auto it = piles_.find(pid);
                 if (it != piles_.end()) {
+                    // 保真记录下线前状态 (IDLE / FAULT / OFFLINE)
+                    if (it->second.status == "FAULT") {
+                        it->second.pre_station_offline_status = "FAULT";
+                    } else if (it->second.status == "OFFLINE") {
+                        it->second.pre_station_offline_status = "OFFLINE";
+                    } else {
+                        it->second.pre_station_offline_status = "IDLE";
+                    }
                     it->second.status = "OFFLINE";
                     it->second.voltage_v = 0.0;
                     it->second.current_a = 0.0;
@@ -490,10 +526,12 @@ public:
             for (const auto& pid : station_pile_ids_[station_id]) {
                 auto it = piles_.find(pid);
                 if (it != piles_.end()) {
-                    if (it->second.status == "OFFLINE") {
-                        it->second.status = "IDLE";
-                        it->second.last_update_time = now;
+                    std::string restored = it->second.pre_station_offline_status;
+                    if (restored != "FAULT" && restored != "OFFLINE") {
+                        restored = "IDLE";
                     }
+                    it->second.status = restored;
+                    it->second.last_update_time = now;
                 }
             }
         }
@@ -614,6 +652,7 @@ public:
             for (size_t i = 0; i < 30 && added < 3; ++i) {
                 station_cursor = (station_cursor % STATIC_STATION_COUNT) + 1;
                 if (station_cursor >= station_pile_ids_.size()) continue;
+                if (!StationStatusManager::instance().is_online(station_cursor)) continue;
 
                 const auto& pids = station_pile_ids_[station_cursor];
                 for (size_t j = 1; j < pids.size() && added < 3; ++j) {
@@ -645,15 +684,20 @@ public:
         std::unique_lock<std::shared_mutex> lock(mutex_);
         auto it = piles_.find(std::string(pile_id));
         if (it != piles_.end()) {
-            it->second.status = std::string(status);
+            std::string norm = normalize_pile_status(status);
+            std::string final_st = norm.empty() ? std::string(status) : norm;
+            it->second.status = final_st;
             it->second.last_update_time = current_time_ms();
-            if (status == "CHARGING") {
+            if (final_st == "CHARGING") {
                 active_charging_pile_ids_.insert(std::string(pile_id));
             } else {
                 active_charging_pile_ids_.erase(std::string(pile_id));
                 it->second.voltage_v = 0.0;
                 it->second.current_a = 0.0;
                 it->second.power_kw = 0.0;
+            }
+            if (final_st == "IDLE" || final_st == "FAULT" || final_st == "OFFLINE") {
+                it->second.pre_station_offline_status = final_st;
             }
         }
     }
@@ -732,9 +776,11 @@ public:
         int total = static_cast<int>(piles_.size());
 
         for (const auto& [_, p] : piles_) {
-            if (p.status == "CHARGING" || p.status == "PREPARING" || p.status == "FINISHING" || p.status == "RESERVED") in_use++;
-            else if (p.status == "IDLE") idle++;
-            else if (p.status == "FAULT" || p.status == "MAINTENANCE" || p.status == "OFFLINE") fault++;
+            bool st_online = StationStatusManager::instance().is_online(p.station_id);
+            std::string st = st_online ? p.status : "OFFLINE";
+            if (st == "CHARGING" || st == "PREPARING" || st == "FINISHING" || st == "RESERVED") in_use++;
+            else if (st == "IDLE") idle++;
+            else if (st == "FAULT" || st == "OFFLINE") fault++;
         }
 
         double in_use_pct = total > 0 ? (static_cast<double>(in_use) / total * 100.0) : 0.0;
@@ -802,13 +848,14 @@ public:
         std::string norm_status = normalize_pile_status(status_filter);
         std::string norm_type = normalize_pile_type(type_filter);
 
-        auto to_dto = [](const PileRuntimeState& p) -> PileAdminItemDTO {
+        auto to_dto = [](const PileRuntimeState& p, bool station_online) -> PileAdminItemDTO {
             std::string st_name;
             const StaticStation* s = find_static_station(static_cast<int32_t>(p.station_id));
             if (s) {
                 st_name = s->name;
             }
-            int st_code = pile_status_to_code(p.status);
+            std::string eff_st = station_online ? p.status : "OFFLINE";
+            int st_code = pile_status_to_code(eff_st);
             return PileAdminItemDTO{
                 .pile_id = p.pile_id,
                 .station_id = p.station_id,
@@ -816,11 +863,11 @@ public:
                 .pile_name = p.pile_name,
                 .type = p.type,
                 .power_kw = p.max_power_kw,
-                .current_status = p.status,
+                .current_status = eff_st,
                 .current_status_code = st_code,
-                .status = p.status,
+                .status = eff_st,
                 .status_code = st_code,
-                .status_desc = std::string(pile_status_to_desc(p.status)),
+                .status_desc = std::string(pile_status_to_desc(eff_st)),
                 .total_charge_count = p.total_charge_count,
                 .total_charge_hours = p.total_charge_hours,
                 .last_heartbeat_at = p.last_heartbeat_at
@@ -828,13 +875,15 @@ public:
         };
 
         if (station_id_filter > 0) {
+            bool station_online = StationStatusManager::instance().is_online(station_id_filter);
             std::vector<const PileRuntimeState*> matched;
             if (station_id_filter < static_cast<int64_t>(station_pile_ids_.size())) {
                 for (const auto& pid : station_pile_ids_[station_id_filter]) {
                     auto it = piles_.find(pid);
                     if (it == piles_.end()) continue;
                     const auto& p = it->second;
-                    if (!norm_status.empty() && p.status != norm_status) continue;
+                    std::string eff_st = station_online ? p.status : "OFFLINE";
+                    if (!norm_status.empty() && eff_st != norm_status) continue;
                     if (!norm_type.empty() && p.type != norm_type) continue;
                     matched.push_back(&p);
                 }
@@ -851,7 +900,7 @@ public:
             if (offset < total) {
                 int64_t end_idx = std::min<int64_t>(offset + page_size, total);
                 for (int64_t i = offset; i < end_idx; ++i) {
-                    data.piles.push_back(to_dto(*matched[i]));
+                    data.piles.push_back(to_dto(*matched[i], station_online));
                 }
             }
             return data;
@@ -867,15 +916,17 @@ public:
         data.page_size = page_size;
 
         for (size_t sid = 1; sid < station_pile_ids_.size(); ++sid) {
+            bool station_online = StationStatusManager::instance().is_online(sid);
             for (const auto& pid : station_pile_ids_[sid]) {
                 auto it = piles_.find(pid);
                 if (it == piles_.end()) continue;
                 const auto& p = it->second;
-                if (!norm_status.empty() && p.status != norm_status) continue;
+                std::string eff_st = station_online ? p.status : "OFFLINE";
+                if (!norm_status.empty() && eff_st != norm_status) continue;
                 if (!norm_type.empty() && p.type != norm_type) continue;
 
                 if (match_count >= offset && match_count < end_idx) {
-                    data.piles.push_back(to_dto(p));
+                    data.piles.push_back(to_dto(p, station_online));
                 }
                 match_count++;
             }

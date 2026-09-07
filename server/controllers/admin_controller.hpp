@@ -81,8 +81,11 @@ public:
             return make_error_response(AppError::StationNotFound, "Station not found");
         }
 
+        bool was_offline = !StationStatusManager::instance().is_online(station_id);
         StationStatusManager::instance().set_online(station_id, true);
-        ChargingStatePool::instance().set_station_piles_online(station_id);
+        if (was_offline) {
+            ChargingStatePool::instance().set_station_piles_online(station_id);
+        }
 
         StationOnlineStatusResponseData resp{
             .station_id = station_id,
@@ -99,10 +102,7 @@ public:
             return make_error_response(AppError::StationNotFound, "Station not found");
         }
 
-        // 1. 设置电站下线状态
-        StationStatusManager::instance().set_online(station_id, false);
-
-        // 2. 检索该电站下所有充电桩，若存在进行中的订单则同步强制结单与结算
+        // 1. 检索该电站下所有充电桩，若存在进行中的订单则同步强制结单与结算，释放预约
         auto piles = ChargingStatePool::instance().get_piles_by_station(station_id);
         int terminated_count = 0;
         int64_t now = current_time_ms();
@@ -154,10 +154,15 @@ public:
                 });
 
                 terminated_count++;
+            } else if (p.status == "RESERVED") {
+                ChargingStatePool::instance().release_reserved_pile(p.pile_id);
             }
         }
 
-        // 3. 将电站下所有充电桩状态置为 OFFLINE
+        // 2. 设置电站下线状态
+        StationStatusManager::instance().set_online(station_id, false);
+
+        // 3. 将电站下所有充电桩状态置为 OFFLINE 并保真记录下线前状态 (IDLE / FAULT / OFFLINE)
         ChargingStatePool::instance().set_station_piles_offline(station_id);
 
         StationOnlineStatusResponseData resp{
@@ -201,6 +206,11 @@ public:
         auto p_res = DbRepository::instance().get_pile_by_id(pile_id);
         if (!p_res) return make_error_response(p_res.error());
 
+        // 关键校验：若所属充电站处于下线状态，拒绝重启充电桩
+        if (!StationStatusManager::instance().is_online(p_res->station_id)) {
+            return make_error_response(AppError::StationNotFound, "充电站已下线，禁止重启充电桩");
+        }
+
         // 重启并重置状态为 IDLE
         ChargingStatePool::instance().set_pile_status(pile_id, "IDLE");
         DbRepository::instance().update_pile_status(pile_id, "IDLE");
@@ -231,30 +241,64 @@ public:
     ) {
         PileStatusChangeRequest sc_req;
         auto err = glz::read_json(sc_req, req.body());
-        if (err || sc_req.target_status.empty()) {
-            return make_error_response(AppError::InvalidJsonPayload);
+
+        std::string raw_target = sc_req.target_status;
+        if (raw_target.empty()) raw_target = sc_req.status;
+        if (raw_target.empty()) raw_target = sc_req.action;
+
+        std::string norm = normalize_pile_status(raw_target);
+
+        // 业务约束校验：本接口专职用于充电桩进入 OFFLINE 状态或上线进入 IDLE 状态
+        if (norm != "OFFLINE" && norm != "IDLE") {
+            return make_error_response(AppError::InvalidParameters, "目标状态不合法，仅支持设为 OFFLINE 或 IDLE");
         }
 
         auto p_res = DbRepository::instance().get_pile_by_id(pile_id);
         if (!p_res) return make_error_response(p_res.error());
 
-        ChargingStatePool::instance().set_pile_status(pile_id, sc_req.target_status);
-        DbRepository::instance().update_pile_status(pile_id, sc_req.target_status);
+        // 关键业务规则：在充电站下线时，服务器拒绝修改这个充电站下的所有充电桩的状态
+        if (!StationStatusManager::instance().is_online(p_res->station_id)) {
+            return make_error_response(AppError::StationNotFound, "充电站已下线，禁止修改其下充电桩状态");
+        }
+
+        std::string prev_status = std::string(ChargingStatePool::instance().get_pile_status(pile_id));
+
+        if (norm == "OFFLINE") {
+            // 若该桩当前处于充电中或有订单，安全终止并结算
+            auto p_state = ChargingStatePool::instance().get_pile_state(pile_id);
+            if (p_state && (p_state->status == "CHARGING" || !p_state->active_order_id.empty())) {
+                std::string oid = p_state->active_order_id;
+                int64_t now = current_time_ms();
+                ChargingStatePool::instance().stop_charging(pile_id);
+                DbRepository::instance().stop_order(
+                    oid, now, p_state->current_soc, p_state->charged_energy_kwh,
+                    p_state->electricity_fee_cents, p_state->service_fee_cents,
+                    p_state->overtime_duration_minutes, p_state->overtime_fee_cents,
+                    p_state->total_fee_cents, "ADMIN_PILE_OFFLINE"
+                );
+                std::string idem = std::format("PILE_OFFLINE_SETTLE_{}_{}", oid, now);
+                DbRepository::instance().settle_order_with_wallet(oid, idem);
+            }
+            ChargingStatePool::instance().release_reserved_pile(pile_id);
+        }
+
+        ChargingStatePool::instance().set_pile_status(pile_id, norm);
+        DbRepository::instance().update_pile_status(pile_id, norm);
 
         WsManager::instance().broadcast_pile_status(PileStatusChangedBroadcastFrame{
             .event = "PILE_STATUS_CHANGED",
             .station_id = p_res->station_id,
             .pile_id = std::string(pile_id),
-            .old_status = p_res->status,
-            .new_status = sc_req.target_status,
-            .new_status_code = pile_status_to_code(sc_req.target_status),
+            .old_status = prev_status,
+            .new_status = norm,
+            .new_status_code = pile_status_to_code(norm),
             .timestamp = current_time_ms()
         });
 
         PileStatusChangeResponseData data{
             .pile_id = std::string(pile_id),
-            .previous_status = p_res->status,
-            .current_status = sc_req.target_status
+            .previous_status = prev_status,
+            .current_status = norm
         };
         return make_success_response(data);
     }

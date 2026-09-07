@@ -16,8 +16,7 @@ enum class PileStatus : uint8_t {
     CHARGING = 3,     // 充电中
     FINISHING = 4,    // 充电完成 / 待结算拔枪
     FAULT = 5,        // 设备故障
-    MAINTENANCE = 6,  // 维护锁定中
-    OFFLINE = 7,      // 设备离线
+    OFFLINE = 7,      // 设备离线 / 下线
     RESERVED = 8      // 已预约锁定
 };
 
@@ -28,7 +27,6 @@ inline std::string_view to_string(PileStatus status) {
         case PileStatus::CHARGING: return "CHARGING";
         case PileStatus::FINISHING: return "FINISHING";
         case PileStatus::FAULT: return "FAULT";
-        case PileStatus::MAINTENANCE: return "MAINTENANCE";
         case PileStatus::OFFLINE: return "OFFLINE";
         case PileStatus::RESERVED: return "RESERVED";
     }
@@ -42,8 +40,7 @@ inline std::string normalize_pile_status(std::string_view s) {
     if (s == "3") return "CHARGING";
     if (s == "4") return "FINISHING";
     if (s == "5") return "FAULT";
-    if (s == "6") return "MAINTENANCE";
-    if (s == "7") return "OFFLINE";
+    if (s == "7" || s == "0") return "OFFLINE";
     if (s == "8") return "RESERVED";
 
     std::string upper;
@@ -52,13 +49,12 @@ inline std::string normalize_pile_status(std::string_view s) {
         upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
     }
 
-    if (upper == "IDLE" || s == "空闲" || s == "空闲可用") return "IDLE";
+    if (upper == "IDLE" || s == "空闲" || s == "空闲可用" || upper == "ONLINE" || s == "上线") return "IDLE";
     if (upper == "PREPARING" || s == "准备中" || s == "插枪准备中") return "PREPARING";
     if (upper == "CHARGING" || s == "充电中" || s == "充电") return "CHARGING";
     if (upper == "FINISHING" || s == "充电完成" || s == "待拔枪" || s == "充电完成待拔枪") return "FINISHING";
     if (upper == "FAULT" || s == "故障" || s == "设备故障") return "FAULT";
-    if (upper == "MAINTENANCE" || s == "维护" || s == "锁定维护中") return "MAINTENANCE";
-    if (upper == "OFFLINE" || s == "离线" || s == "设备离线") return "OFFLINE";
+    if (upper == "OFFLINE" || s == "离线" || s == "设备离线" || s == "下线" || s == "已下线") return "OFFLINE";
     if (upper == "RESERVED" || s == "已预约" || s == "预约" || s == "已预约锁定") return "RESERVED";
 
     return upper;
@@ -86,7 +82,6 @@ inline int pile_status_to_code(std::string_view st) {
     if (norm == "CHARGING") return 3;
     if (norm == "FINISHING") return 4;
     if (norm == "FAULT") return 5;
-    if (norm == "MAINTENANCE") return 6;
     if (norm == "OFFLINE") return 7;
     if (norm == "RESERVED") return 8;
     return 1;
@@ -99,7 +94,6 @@ inline std::string_view pile_status_to_desc(std::string_view st) {
     if (norm == "CHARGING") return "充电中";
     if (norm == "FINISHING") return "充电完成待拔枪";
     if (norm == "FAULT") return "设备故障";
-    if (norm == "MAINTENANCE") return "锁定维护中";
     if (norm == "OFFLINE") return "离线";
     if (norm == "RESERVED") return "已预约锁定";
     return "空闲可用";
@@ -112,7 +106,6 @@ inline std::string_view pile_code_to_status(int code) {
         case 3: return "CHARGING";
         case 4: return "FINISHING";
         case 5: return "FAULT";
-        case 6: return "MAINTENANCE";
         case 7: return "OFFLINE";
         case 8: return "RESERVED";
         default: return "IDLE";
