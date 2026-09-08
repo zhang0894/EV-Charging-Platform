@@ -55,7 +55,6 @@ private slots:
     void onNextPage();              // 下一页（按当前查询模式）
     void onOrdersReady(const QJsonArray &orders, int total, int page, int pageSize);
     void onOrderDetailReady(const QJsonObject &data); // 详情就绪 -> 弹窗（第二期）
-    void onOrderUserResolved(const QString &orderId, qint64 userId, const QString &phone);
     void onRefundSuccess(const QString &msg);
     void onErrorOccurred(const QString &errorMsg);
 

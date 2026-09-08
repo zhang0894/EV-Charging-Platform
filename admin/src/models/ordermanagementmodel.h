@@ -29,13 +29,13 @@ QT_END_NAMESPACE
  *       请求头: Idempotency-Key（每次请求生成唯一 UUID，防止重复退款）
  *       请求体: { refund_amount, refund_amount_cents, reason }
  *
- * 实测说明（2026-09-07，线上 62.234.84.145:8080）：
+ * 实测说明（2026-09-08，线上 62.234.84.145:8080）：
  *   - 接口可用，total 约 20 万级；
- *   - 实际返回字段与文档 3.6.1 有差异：无 user_id / user_phone，
- *     但多出 station_id / pile_type / duration_minutes / overtime_minutes /
- *     settled_at / total_fee_cents；缺失字段在表格中以 "-" 显示；
- *   - station_id 参数有效；order_status 与 start_date/end_date 参数当前被
- *     服务端忽略（返回全量），参数仍按文档发送，待后端修复后自动生效。
+ *   - 列表行内含 user_id / user_phone 字段（此前缺失，已由服务端补齐）；
+ *   - user_id / phone / status(兼容 order_status) / start_date / end_date
+ *     筛选参数均已生效；
+ *   - 按用户查询走同一接口（user_id/phone 参数），原独立接口
+ *     /admin/orders/user 已下线（HTTP 404）。
  *
  * 统一响应信封：{ code, msg, data, timestamp }，code==0 表示成功。
  * 表格列顺序：订单ID | 用户ID | 用户手机号 | 充电站 | 充电桩 | 充电量(kWh)
@@ -98,12 +98,14 @@ public:
                      const QString &endDate = QString());
 
     /**
-     * @brief 按用户查询历史订单（文档 3.6.2，第二期新增）
+     * @brief 按用户查询历史订单（新版文档 3.6.1 合并接口，第二期新增）
      * @param userId 用户ID（0=不携带）
      * @param phone 用户手机号（空串=不携带）
      *
-     * GET /api/v1/admin/orders/user?user_id=&phone=&page=&page_size=
-     * user_id 与 phone 至少提供一个（后端校验：code 50006）；
+     * GET /api/v1/admin/orders?user_id=&phone=&page=&page_size=
+     * 2026-09-08 接口改版：原独立接口 /admin/orders/user 已下线（404），
+     * user_id/phone 合并为列表接口的可选参数；两者同时提供时必须指向
+     * 同一用户，矛盾时服务端返回 HTTP 400。
      * 响应结构与 3.6.1 相同（orders/total/page/page_size），
      * 复用同一 populateOrders 填表与 ordersReady 信号。
      */
@@ -120,17 +122,6 @@ public:
      * 已退款订单的退款明细块由服务端按需返回，缺失时 Widget 不展示该区块。
      */
     void fetchOrderDetail(const QString &orderId);
-
-    /**
-     * @brief 批量补齐订单的用户信息（前端兜底方案）
-     * @param orderIds 当前页各行的订单号
-     *
-     * 列表接口（3.6.1）实测不返回 user_id / user_phone（服务端 SQL 未查询该列），
-     * 因此对每行调用详情接口 GET /api/v1/admin/orders/{order_id}（含这两个字段），
-     * 逐单解析后发射 orderUserResolved()，由 Widget 回填表格单元格。
-     * 单个订单补齐失败时仅记录日志，不打扰用户。
-     */
-    void resolveOrderUsers(const QStringList &orderIds);
 
     /**
      * @brief 管理员对指定订单一键退款（文档 3.6.3）
@@ -159,13 +150,6 @@ signals:
     /** 订单详情已就绪（第二期：按用户查询/订单详情弹窗），data 为完整订单对象 */
     void orderDetailReady(const QJsonObject &data);
 
-    /**
-     * 单个订单的用户信息已补齐（resolveOrderUsers 的逐单回调）：
-     * Widget 按 orderId 定位表格行，回填"用户ID/用户手机号"两列；
-     * userId<=0 或 phone 为空表示详情中缺失，展示 "-"。
-     */
-    void orderUserResolved(const QString &orderId, qint64 userId, const QString &phone);
-
     /** 退款成功（msg 为可直接展示的提示信息，含退款流水号与用户余额变化） */
     void refundSuccess(const QString &msg);
 
@@ -181,9 +165,6 @@ private:
 
     /** 处理详情响应（3.6.4）：校验 -> 发 orderDetailReady */
     void handleDetailReply(QNetworkReply *reply, const QString &orderId);
-
-    /** 处理用户信息补齐响应：静默解析 -> 发 orderUserResolved（失败仅记日志） */
-    void handleUserResolveReply(QNetworkReply *reply, const QString &orderId);
 
     /** 处理退款响应：校验 -> 发 refundSuccess */
     void handleRefundReply(QNetworkReply *reply, const QString &orderId);
@@ -207,6 +188,9 @@ private:
     QString m_orderStatus;
     QString m_startDate;
     QString m_endDate;
+    // 当前请求是否携带 phone 参数（手机号为精确匹配：用户不存在时后端
+    // 返回 HTTP 404 而非空列表，handleOrdersReply 据此做"未找到"特殊处理）
+    bool m_lastQueryHasPhone = false;
 };
 
 #endif // ORDERMANAGEMENTMODEL_H

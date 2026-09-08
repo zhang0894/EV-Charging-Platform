@@ -122,6 +122,7 @@ void OrderManagementModel::fetchOrders(int page, int pageSize, int stationId,
     m_orderStatus = orderStatus.trimmed();
     m_startDate = startDate.trimmed();
     m_endDate = endDate.trimmed();
+    m_lastQueryHasPhone = false; // 全局列表查询不带 phone 参数
 
     QUrl url(m_serverBase + QStringLiteral("/api/v1/admin/orders"));
     QUrlQuery query;
@@ -153,9 +154,11 @@ void OrderManagementModel::fetchOrders(int page, int pageSize, int stationId,
 }
 
 // ============================================================================
-// 按用户查询历史订单（文档 3.6.2，第二期新增）
-//   GET /api/v1/admin/orders/user?user_id=&phone=&page=&page_size=
-//   user_id 与 phone 至少提供一个（前端预校验 + 后端 code 50006 兜底）
+// 按用户查询历史订单（新版文档 3.6.1 合并接口，第二期新增）
+//   GET /api/v1/admin/orders?user_id=&phone=&page=&page_size=
+//   2026-09-08 接口改版：原独立接口 /admin/orders/user 已下线（404），
+//   user_id/phone 合并为列表接口的可选参数；两者同时提供时必须指向同一
+//   用户，矛盾时服务端返回 HTTP 400（由错误弹窗透出）。
 // ============================================================================
 
 void OrderManagementModel::fetchOrdersByUser(qint64 userId, const QString &phone,
@@ -164,7 +167,7 @@ void OrderManagementModel::fetchOrdersByUser(qint64 userId, const QString &phone
     m_page = qMax(1, page);
     m_pageSize = qMax(1, pageSize);
 
-    QUrl url(m_serverBase + QStringLiteral("/api/v1/admin/orders/user"));
+    QUrl url(m_serverBase + QStringLiteral("/api/v1/admin/orders"));
     QUrlQuery query;
     if (userId > 0) {
         query.addQueryItem(QStringLiteral("user_id"), QString::number(userId));
@@ -177,12 +180,16 @@ void OrderManagementModel::fetchOrdersByUser(qint64 userId, const QString &phone
     query.addQueryItem(QStringLiteral("page_size"), QString::number(m_pageSize));
     url.setQuery(query);
 
+    // 手机号为精确匹配：用户不存在时后端返回 HTTP 404（而非空列表），
+    // handleOrdersReply 据此标记做"未找到该用户的订单"特殊处理
+    m_lastQueryHasPhone = !ph.isEmpty();
+
     qDebug().noquote() << "[OrderManagementModel] fetchOrdersByUser() -"
                        << url.toString();
 
     QNetworkRequest request(url);
     TokenManager::instance()->get(request, [this](QNetworkReply *reply) {
-        handleOrdersReply(reply, QStringLiteral("GET /api/v1/admin/orders/user"));
+        handleOrdersReply(reply, QStringLiteral("GET /api/v1/admin/orders?user"));
     });
 }
 
@@ -249,72 +256,6 @@ void OrderManagementModel::handleDetailReply(QNetworkReply *reply,
     }
     qDebug().noquote() << "[OrderManagementModel] 订单详情获取成功 -" << orderId;
     emit orderDetailReady(data);
-}
-
-// ============================================================================
-// 批量补齐订单用户信息（前端兜底：列表接口不含 user_id / user_phone）
-//   对本页每个订单调用详情接口，解析 user_id / user_phone 后逐单发信号。
-//   QNetworkAccessManager 默认对同一主机并发限制（HTTP/1.1 约 6 路），
-//   超出的请求自动排队，无需额外限流。
-// ============================================================================
-
-void OrderManagementModel::resolveOrderUsers(const QStringList &orderIds)
-{
-    for (const QString &orderId : orderIds) {
-        if (orderId.isEmpty()) {
-            continue;
-        }
-        QUrl url(m_serverBase
-                 + QStringLiteral("/api/v1/admin/orders/%1").arg(orderId));
-        QNetworkRequest request(url);
-
-        TokenManager::instance()->get(request, [this, orderId](QNetworkReply *reply) {
-            handleUserResolveReply(reply, orderId);
-        });
-    }
-}
-
-void OrderManagementModel::handleUserResolveReply(QNetworkReply *reply,
-                                                  const QString &orderId)
-{
-    const QNetworkReply::NetworkError netError = reply->error();
-    const int httpStatus =
-        reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    const QByteArray body = reply->readAll();
-    reply->deleteLater();
-
-    const QString apiTag = QStringLiteral("GET /api/v1/admin/orders/%1").arg(orderId);
-
-    // 补齐属于后台增强，失败静默（仅记日志），避免弹窗刷屏
-    if (netError != QNetworkReply::NoError
-        || httpStatus < 200 || httpStatus >= 300) {
-        qDebug().noquote() << "[OrderManagementModel] 用户信息补齐失败 -"
-                           << apiTag << "HTTP" << httpStatus << netError;
-        return;
-    }
-
-    // 补齐属于后台增强，自带静默解析（不走 extractData，避免业务码非 0 时弹窗刷屏）
-    QJsonParseError parseError;
-    const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-        qDebug().noquote() << "[OrderManagementModel] 用户信息补齐解析失败 -"
-                           << apiTag << parseError.errorString();
-        return;
-    }
-    const QJsonObject root = doc.object();
-    if (root.value(QStringLiteral("code")).toInt(-1) != 0) {
-        qDebug().noquote() << "[OrderManagementModel] 用户信息补齐业务错误 -"
-                           << apiTag << root.value(QStringLiteral("msg")).toString();
-        return;
-    }
-
-    const QJsonObject data = root.value(QStringLiteral("data")).toObject();
-    const QJsonValue uidVal = data.value(QStringLiteral("user_id"));
-    const qint64 userId = uidVal.isUndefined() || uidVal.isNull()
-        ? 0 : uidVal.toVariant().toLongLong();
-    const QString phone = data.value(QStringLiteral("user_phone")).toString();
-
-    emit orderUserResolved(orderId, userId, phone);
 }
 
 // ============================================================================
@@ -492,6 +433,17 @@ void OrderManagementModel::handleOrdersReply(QNetworkReply *reply,
         reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     const QByteArray body = reply->readAll();
     reply->deleteLater();
+
+    // 手机号精确查询未命中：后端对不存在的手机号返回 HTTP 404（此时
+    // netError 同时为 ContentNotFoundError，须在通用网络错误检查之前拦截）。
+    // 不弹错误提示，置空列表，由 UI 显示"未找到该用户的订单"。
+    if (httpStatus == 404 && m_lastQueryHasPhone) {
+        qDebug().noquote() << "[OrderManagementModel]" << apiTag
+                           << "手机号未命中(404) - 置空列表";
+        populateOrders(QJsonArray());
+        emit ordersReady(QJsonArray(), 0, m_page, m_pageSize);
+        return;
+    }
 
     if (netError != QNetworkReply::NoError) {
         const QString msg = QStringLiteral("%1 网络请求失败 (HTTP %2): %3")
