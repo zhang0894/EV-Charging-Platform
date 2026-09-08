@@ -16,7 +16,12 @@
 #include <QDialogButtonBox>
 #include <QDoubleValidator>
 
-// 表格内操作按钮样式（调账=蓝 / 冻结=红 / 解冻=绿），与轻量专业风主题一致
+// 表格内操作按钮样式（查看订单=青 / 调账=蓝 / 冻结=红 / 解冻=绿），与轻量专业风主题一致
+static const QString kViewOrdersBtnStyle = QStringLiteral(
+    "QPushButton{background-color:#e6f7f8;color:#0e8a94;"
+    "border:1px solid #bfe8ec;border-radius:4px;padding:3px 12px;min-width:64px;}"
+    "QPushButton:hover{background-color:#cdeff2;color:#0b6e76;border-color:#8fd8de;}");
+
 static const QString kAdjustBtnStyle = QStringLiteral(
     "QPushButton{background-color:#e8f0fe;color:#1a5cff;"
     "border:1px solid #d6e2ff;border-radius:4px;padding:3px 12px;min-width:48px;}"
@@ -47,6 +52,14 @@ UserManagementWidget::UserManagementWidget(QWidget *parent)
             this, &UserManagementWidget::onAdjustSuccess);
     connect(m_model, &UserManagementModel::errorOccurred,
             this, &UserManagementWidget::onErrorOccurred);
+
+    // 日志转发：查询/操作事件 + 失败信息统一上抛主窗口日志区
+    connect(m_model, &UserManagementModel::logRequested,
+            this, &UserManagementWidget::logMessage);
+    connect(m_model, &UserManagementModel::errorOccurred, this,
+            [this](const QString &msg) {
+                emit logMessage(tr("失败：%1").arg(msg));
+            });
 
     // 工具栏交互
     connect(m_btnQuery, &QPushButton::clicked, this, &UserManagementWidget::onQueryClicked);
@@ -153,10 +166,15 @@ void UserManagementWidget::buildUi()
     m_tableView->verticalHeader()->setDefaultSectionSize(44);
     m_tableView->horizontalHeader()->setHighlightSections(false);
     m_tableView->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    // 操作列固定宽度（调账 + 冻结/解冻两个按钮并排），其余列均分拉伸
+    // 操作列固定宽度：三个按钮实际需求约 258px（查看订单 90 + 调账 74 + 冻结 82 + 间距边距），
+    // 取 260 保证"查看订单 / 调账 / 冻结"完整显示不重叠，其余列均分拉伸
     m_tableView->horizontalHeader()->setSectionResizeMode(
         UserManagementModel::ActionCol, QHeaderView::Fixed);
-    m_tableView->setColumnWidth(UserManagementModel::ActionCol, 180);
+    m_tableView->setColumnWidth(UserManagementModel::ActionCol, 260);
+    // 余额列固定压缩至 90px 作为代偿（金额列不需要太宽）
+    m_tableView->horizontalHeader()->setSectionResizeMode(
+        UserManagementModel::BalanceCol, QHeaderView::Fixed);
+    m_tableView->setColumnWidth(UserManagementModel::BalanceCol, 90);
     rootLayout->addWidget(m_tableView, 1);
 
     // ---------------- 底部分页栏 ----------------
@@ -207,11 +225,22 @@ void UserManagementWidget::installActionButtons()
         const bool frozen = (status == 2);
         const int targetStatus = frozen ? 1 : 2; // 状态取反：冻结 <-> 正常
 
-        // 容器：调账按钮（每行都有）+ 冻结/解冻按钮
+        // 容器：查看订单（每行都有）+ 调账按钮（每行都有）+ 冻结/解冻按钮
         auto *panel = new QWidget(m_tableView);
         auto *lay = new QHBoxLayout(panel);
         lay->setContentsMargins(2, 2, 2, 2);
         lay->setSpacing(4);
+
+        // 跨页入口：跳转订单管理页并自动按该用户筛选（MainWindow 接收）
+        auto *btnOrders = new QPushButton(tr("查看订单"), panel);
+        btnOrders->setCursor(Qt::PointingHandCursor);
+        btnOrders->setStyleSheet(kViewOrdersBtnStyle);
+        // 按值捕获目标用户，避免行号随刷新变化带来的错位
+        connect(btnOrders, &QPushButton::clicked, this,
+                [this, userId, phone]() {
+                    emit viewOrdersRequested(userId, phone);
+                });
+        lay->addWidget(btnOrders);
 
         auto *btnAdjust = new QPushButton(tr("调账"), panel);
         btnAdjust->setCursor(Qt::PointingHandCursor);

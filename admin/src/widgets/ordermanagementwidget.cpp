@@ -56,12 +56,18 @@ OrderManagementWidget::OrderManagementWidget(QWidget *parent)
             this, &OrderManagementWidget::onOrdersReady);
     connect(m_model, &OrderManagementModel::orderDetailReady,
             this, &OrderManagementWidget::onOrderDetailReady);
-    connect(m_model, &OrderManagementModel::orderUserResolved,
-            this, &OrderManagementWidget::onOrderUserResolved);
     connect(m_model, &OrderManagementModel::refundSuccess,
             this, &OrderManagementWidget::onRefundSuccess);
     connect(m_model, &OrderManagementModel::errorOccurred,
             this, &OrderManagementWidget::onErrorOccurred);
+
+    // 日志转发：查询/操作事件 + 失败信息统一上抛主窗口日志区
+    connect(m_model, &OrderManagementModel::logRequested,
+            this, &OrderManagementWidget::logMessage);
+    connect(m_model, &OrderManagementModel::errorOccurred, this,
+            [this](const QString &msg) {
+                emit logMessage(tr("失败：%1").arg(msg));
+            });
 
     // 工具栏交互
     connect(m_btnQuery, &QPushButton::clicked, this, &OrderManagementWidget::onQueryClicked);
@@ -398,32 +404,10 @@ void OrderManagementWidget::onOrdersReady(const QJsonArray &orders, int total,
     updatePager(total, page, pageSize);
     installActionButtons();
 
-    // 列表接口不含 user_id / user_phone：对本页订单逐单调详情接口补齐，
-    // 结果经 onOrderUserResolved 异步回填（服务端补齐字段后可移除该兜底）
-    QStringList orderIds;
-    orderIds.reserve(static_cast<qsizetype>(orders.size()));
-    for (const QJsonValue &v : orders) {
-        orderIds.append(v.toObject().value(QStringLiteral("order_id")).toString());
-    }
-    m_model->resolveOrderUsers(orderIds);
-}
-
-// ------------- 用户信息补齐回调：按订单号定位行，回填用户ID/手机号列 -------------
-void OrderManagementWidget::onOrderUserResolved(const QString &orderId,
-                                                qint64 userId, const QString &phone)
-{
-    QStandardItemModel *tm = m_model->getModel();
-    // 按订单号查找目标行：翻页后旧行已被移除，此处自然成为无操作
-    for (int r = 0; r < tm->rowCount(); ++r) {
-        const QModelIndex idx = tm->index(r, OrderManagementModel::ActionCol);
-        if (idx.data(OrderManagementModel::OrderIdRole).toString() != orderId) {
-            continue;
-        }
-        tm->item(r, OrderManagementModel::UserIdCol)->setText(
-            userId > 0 ? QString::number(userId) : QStringLiteral("-"));
-        tm->item(r, OrderManagementModel::UserPhoneCol)->setText(
-            phone.isEmpty() ? QStringLiteral("-") : phone);
-        return;
+    // 手机号精确查询结果为空（含 404 未命中置空的场景）：分页栏给出明确提示。
+    // 互斥约定下 m_curPhone 非空即代表本次为手机号查询。
+    if (total == 0 && m_queryMode == QueryMode::User && !m_curPhone.isEmpty()) {
+        m_pageLabel->setText(tr("未找到该用户的订单"));
     }
 }
 
@@ -450,9 +434,26 @@ void OrderManagementWidget::onQueryClicked()
     applyFiltersAndFetch(1);
 }
 
+// ------------- 外部跳转入口：按用户筛选订单（跨页联动） -------------
+void OrderManagementWidget::setFilterByUser(qint64 userId, const QString &phone)
+{
+    // 优先使用 user_id，phone 作为备选（与工具栏"互斥填一项"的约定一致）
+    if (userId > 0) {
+        m_userIdEdit->setText(QString::number(userId));
+        m_phoneEdit->clear();
+    } else if (!phone.trimmed().isEmpty()) {
+        m_phoneEdit->setText(phone.trimmed());
+        m_userIdEdit->clear();
+    } else {
+        return; // 无有效条件，不发起查询
+    }
+    // 复用"查用户订单"的校验与查询逻辑（自动切到用户模式并重置第 1 页）
+    onUserQueryClicked();
+}
+
 void OrderManagementWidget::onUserQueryClicked()
 {
-    // 按用户查询（第二期）：用户ID 与手机号至少填一项
+    // 按用户查询（第二期）：用户ID 与手机号互斥，只能填其中一项
     const QString uidText = m_userIdEdit->text().trimmed();
     const QString phone = m_phoneEdit->text().trimmed();
 
@@ -460,10 +461,23 @@ void OrderManagementWidget::onUserQueryClicked()
         QMessageBox::information(this, tr("提示"), tr("请输入用户ID或手机号"));
         return;
     }
+    if (!uidText.isEmpty() && !phone.isEmpty()) {
+        QMessageBox::information(this, tr("提示"),
+                                 tr("用户ID与手机号只能填写其中一项"));
+        return;
+    }
+    // 后端 phone 参数仅支持完整 11 位手机号精确匹配，不符合格式时不发请求
+    if (!phone.isEmpty() && phone.length() != 11) {
+        QMessageBox::warning(this, tr("格式错误"),
+                             tr("请输入完整的 11 位手机号"));
+        m_phoneEdit->setFocus();
+        m_phoneEdit->selectAll();
+        return;
+    }
 
-    // 记录当前用户查询上下文，翻页/刷新沿用同一参数
-    m_curUserId = uidText.toLongLong();
-    m_curPhone = phone;
+    // 记录当前用户查询上下文（互斥：只保留填写的一项），翻页/刷新沿用同一参数
+    m_curUserId = uidText.isEmpty() ? 0 : uidText.toLongLong();
+    m_curPhone = uidText.isEmpty() ? phone : QString();
     m_queryMode = QueryMode::User;
     applyUserQueryAndFetch(1); // 用户查询重置为第 1 页
 }

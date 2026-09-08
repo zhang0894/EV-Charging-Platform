@@ -148,6 +148,14 @@ void PileManagementModel::fetchPiles(int page, int pageSize, int stationId,
 
     qDebug().noquote() << "[PileManagementModel] fetchPiles() -" << url.toString();
 
+    QStringList conds;
+    if (stationId > 0)   conds << tr("电站ID %1").arg(stationId);
+    if (!m_statusFilter.isEmpty()) conds << pileStatusText(m_statusFilter);
+    if (!m_typeFilter.isEmpty())   conds << pileTypeText(m_typeFilter);
+    emit logRequested(conds.isEmpty()
+        ? tr("充电桩列表查询")
+        : tr("充电桩列表查询：%1").arg(conds.join(QStringLiteral("，"))));
+
     QNetworkRequest request(url);
     // prepareRequest 由 TokenManager::get 内部统一处理
     TokenManager::instance()->get(request, [this](QNetworkReply *reply) {
@@ -172,6 +180,9 @@ void PileManagementModel::restartPile(const QString &pileId)
         .toJson(QJsonDocument::Compact);
 
     qDebug().noquote() << "[PileManagementModel] restartPile() -" << url.toString();
+
+    // 日志：远程重启操作（已发起）
+    emit logRequested(tr("充电桩重启：电桩 %1（已发起）").arg(pileId));
 
     TokenManager::instance()->post(request, body,
         [this, pileId](QNetworkReply *reply) {

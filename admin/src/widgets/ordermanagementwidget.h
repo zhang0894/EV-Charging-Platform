@@ -46,6 +46,20 @@ public:
      */
     void setAuthToken(const QString &token);
 
+    /**
+     * @brief 外部跳转入口：按用户筛选订单（跨页联动，供 MainWindow 调用）
+     * @param userId 用户ID（优先使用，>0 时有效）
+     * @param phone  手机号（user_id 无效时的备选）
+     *
+     * 填入工具栏对应输入框后复用 onUserQueryClicked() 的校验与查询逻辑，
+     * 自动切换为"按用户查询"模式并重置到第 1 页。
+     */
+    void setFilterByUser(qint64 userId, const QString &phone);
+
+signals:
+    /** 日志转发：Model 的查询/操作事件与失败信息（由 MainWindow 连接 appendLog） */
+    void logMessage(const QString &message);
+
 private slots:
     void onQueryClicked();          // "查询"按钮：全局列表（状态/站点/日期筛选，重置第 1 页）
     void onUserQueryClicked();      // "查用户订单"按钮：按用户ID/手机号查询（第二期）
@@ -55,7 +69,6 @@ private slots:
     void onNextPage();              // 下一页（按当前查询模式）
     void onOrdersReady(const QJsonArray &orders, int total, int page, int pageSize);
     void onOrderDetailReady(const QJsonObject &data); // 详情就绪 -> 弹窗（第二期）
-    void onOrderUserResolved(const QString &orderId, qint64 userId, const QString &phone);
     void onRefundSuccess(const QString &msg);
     void onErrorOccurred(const QString &errorMsg);
 

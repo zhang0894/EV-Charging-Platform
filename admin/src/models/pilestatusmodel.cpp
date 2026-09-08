@@ -37,6 +37,9 @@ void PileStatusModel::fetchData()
                    + QStringLiteral("/api/v1/admin/dashboard/pile-status-overview"));
     qDebug().noquote() << "[PileStatusModel] fetchData() -" << url.toString();
 
+    // 日志：概览查询（showEvent 自动刷新 / 手动刷新均会触发）
+    emit logRequested(tr("电桩状态概览：发起查询"));
+
     QNetworkRequest request(url);
     // prepareRequest 由 TokenManager::get 内部完成（注入 Authorization 头）
 

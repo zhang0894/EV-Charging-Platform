@@ -65,6 +65,13 @@ void UserManagementModel::fetchUsers(int page, int pageSize,
     qDebug().noquote() << "[UserManagementModel] fetchUsers() -"
                        << url.toString();
 
+    QStringList conds;
+    if (!m_phoneFilter.isEmpty())  conds << tr("手机号包含“%1”").arg(m_phoneFilter);
+    if (m_statusFilter >= 1)     conds << (m_statusFilter == 1 ? tr("正常") : tr("已冻结"));
+    emit logRequested(conds.isEmpty()
+        ? tr("用户列表查询")
+        : tr("用户列表查询：%1").arg(conds.join(QStringLiteral("，"))));
+
     QNetworkRequest request(url);
     // prepareRequest 由 TokenManager::get 内部统一处理
     TokenManager::instance()->get(request, [this](QNetworkReply *reply) {
@@ -87,6 +94,11 @@ void UserManagementModel::setUserStatus(int userId, int newStatus, const QString
     QJsonObject body;
     body.insert(QStringLiteral("status"), newStatus);
     body.insert(QStringLiteral("reason"), reason);
+
+    const QString actionText = (newStatus == 2) ? tr("冻结") : tr("解冻");
+    emit logRequested(tr("用户%1：用户ID %2（已发起）").arg(actionText).arg(userId));
+
+    Q_UNUSED(reason); // reason 含敏感信息，不写入日志
 
     TokenManager::instance()->put(
         request, QJsonDocument(body).toJson(QJsonDocument::Compact),
@@ -124,6 +136,10 @@ void UserManagementModel::adjustUserWallet(int userId, double amount,
 
     qDebug().noquote() << "[UserManagementModel] adjustUserWallet() -"
                        << url.toString() << "amount_cents:" << amountCents;
+
+    // 日志：调账远程操作（remark 可能含敏感信息，不记录）
+    emit logRequested(tr("用户调账：用户ID %1，金额 %2 元（已发起）")
+                          .arg(userId).arg(amount));
 
     TokenManager::instance()->post(
         request, QJsonDocument(body).toJson(QJsonDocument::Compact),

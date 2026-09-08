@@ -136,6 +136,9 @@ signals:
     /** 网络请求失败 / HTTP 异常状态 / 响应解析失败 / 业务错误码非 0 */
     void errorOccurred(const QString &errorMsg);
 
+    /** 日志请求：查询/操作事件（由 Widget 转发至 MainWindow 日志区，不含 Token 等敏感信息） */
+    void logRequested(const QString &message);
+
 private:
     /** StationInfo -> 与 API 相同结构的 JSON（用于合并模拟数据） */
     QJsonObject stationInfoToJson(const StationInfo &info) const;

@@ -25,6 +25,16 @@ public:
     explicit MainWindow(const QString &authToken, QWidget *parent = nullptr);
     ~MainWindow();
 
+    /**
+     * @brief 跳转至订单管理页并按用户筛选（跨页入口，供用户管理"查看订单"调用）
+     * @param userId 用户ID（优先使用，>0 时有效）
+     * @param phone  手机号（user_id 无效时的备选）
+     *
+     * 复用侧边栏菜单的切换路径：同步按钮选中态、切换 Stack 页面并记录日志，
+     * 随后调用订单页 setFilterByUser() 自动填入条件并发起查询。
+     */
+    void showOrdersForUser(int userId, const QString &phone);
+
 public slots:
     /** 追加一行操作日志到底部日志区 */
     void appendLog(const QString &message);

@@ -32,6 +32,14 @@ PileManagementWidget::PileManagementWidget(QWidget *parent)
     connect(m_model, &PileManagementModel::errorOccurred,
             this, &PileManagementWidget::onErrorOccurred);
 
+    // 日志转发：查询/操作事件 + 失败信息统一上抛主窗口日志区
+    connect(m_model, &PileManagementModel::logRequested,
+            this, &PileManagementWidget::logMessage);
+    connect(m_model, &PileManagementModel::errorOccurred, this,
+            [this](const QString &msg) {
+                emit logMessage(tr("失败：%1").arg(msg));
+            });
+
     // 工具栏交互
     connect(m_btnQuery, &QPushButton::clicked, this, &PileManagementWidget::onQueryClicked);
     connect(m_btnRefresh, &QPushButton::clicked, this, &PileManagementWidget::onRefreshClicked);
