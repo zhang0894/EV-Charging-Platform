@@ -14,6 +14,9 @@
 #include "../memory/station_status_manager.hpp"
 #include "../memory/station_price_manager.hpp"
 #include <glaze/glaze.hpp>
+#include <ctime>
+#include <cctype>
+#include <cstdio>
 
 namespace ev {
 
@@ -365,43 +368,149 @@ public:
     }
 
     // ==========================================
-    // 5. 订单管理、用户历史订单查询与一键退款
+    // 5. 订单管理与一键退款
     // ==========================================
+
+    static std::optional<int64_t> parse_date_time_to_ms(std::string_view str, bool is_end) {
+        if (str.empty()) return 0;
+
+        while (!str.empty() && std::isspace(static_cast<unsigned char>(str.front()))) str.remove_prefix(1);
+        while (!str.empty() && std::isspace(static_cast<unsigned char>(str.back()))) str.remove_suffix(1);
+        if (str.empty()) return 0;
+
+        bool all_digits = true;
+        for (char c : str) {
+            if (!std::isdigit(static_cast<unsigned char>(c))) {
+                all_digits = false;
+                break;
+            }
+        }
+        if (all_digits) {
+            try {
+                int64_t val = std::stoll(std::string(str));
+                if (val <= 9999999999LL) {
+                    val *= 1000LL;
+                }
+                return val;
+            } catch (...) {
+                return std::nullopt;
+            }
+        }
+
+        int y = 0, m = 0, d = 0, hh = 0, mm = 0, ss = 0;
+        std::string s(str);
+        bool is_full_time = false;
+
+        if (std::sscanf(s.c_str(), "%d-%d-%d %d:%d:%d", &y, &m, &d, &hh, &mm, &ss) == 6 ||
+            std::sscanf(s.c_str(), "%d-%d-%dT%d:%d:%d", &y, &m, &d, &hh, &mm, &ss) == 6) {
+            is_full_time = true;
+        } else if (std::sscanf(s.c_str(), "%d-%d-%d", &y, &m, &d) == 3) {
+            if (is_end) {
+                hh = 23; mm = 59; ss = 59;
+            } else {
+                hh = 0; mm = 0; ss = 0;
+            }
+        } else {
+            return std::nullopt;
+        }
+
+        if (y < 1970 || m < 1 || m > 12 || d < 1 || d > 31 || hh < 0 || hh > 23 || mm < 0 || mm > 59 || ss < 0 || ss > 59) {
+            return std::nullopt;
+        }
+
+        std::tm tm{};
+        tm.tm_year = y - 1900;
+        tm.tm_mon = m - 1;
+        tm.tm_mday = d;
+        tm.tm_hour = hh;
+        tm.tm_min = mm;
+        tm.tm_sec = ss;
+        tm.tm_isdst = -1;
+
+        std::time_t t = std::mktime(&tm);
+        if (t == static_cast<std::time_t>(-1)) {
+            return std::nullopt;
+        }
+
+        int64_t ms = static_cast<int64_t>(t) * 1000LL;
+        if (is_end && !is_full_time) {
+            ms += 999LL;
+        }
+        return ms;
+    }
 
     static http::response<http::string_body> handle_get_orders(
         int page,
         int page_size,
         int64_t station_id_filter,
         std::string_view status_filter,
-        std::string_view start_date,
-        std::string_view end_date
-    ) {
-        auto res = DbRepository::instance().get_orders_admin_paged(page, page_size, station_id_filter, status_filter, start_date, end_date);
-        if (!res) return make_error_response(res.error());
-        return make_success_response(*res);
-    }
-
-    static http::response<http::string_body> handle_get_user_historical_orders(
         int64_t query_user_id,
         std::string_view phone,
-        int page,
-        int page_size,
-        std::string_view sort_order
+        std::string_view start_date,
+        std::string_view end_date,
+        std::string_view sort_order = "desc"
     ) {
-        int64_t target_uid = query_user_id;
-        if (target_uid <= 0 && !phone.empty()) {
-            auto u_res = DbRepository::instance().get_user_by_phone(phone);
-            if (!u_res) return make_error_response(u_res.error());
-            target_uid = u_res->user_id;
+        // 1. user_id 与 phone 筛选与矛盾校验
+        int64_t target_user_id = 0;
+        if (query_user_id < 0) {
+            return make_error_response(AppError::InvalidParameters, "Invalid user_id");
         }
 
-        if (target_uid <= 0) {
-            return make_error_response(AppError::InvalidParameters, "Must provide user_id or phone");
+        if (query_user_id > 0 && !phone.empty()) {
+            auto u_by_phone = DbRepository::instance().get_user_by_phone(phone);
+            auto u_by_id = DbRepository::instance().get_user_by_id(query_user_id);
+            if (!u_by_phone || !u_by_id || u_by_phone->user_id != query_user_id) {
+                return make_error_response(AppError::InvalidParameters, "Provided user_id and phone are contradictory");
+            }
+            target_user_id = query_user_id;
+        } else if (!phone.empty()) {
+            auto u_by_phone = DbRepository::instance().get_user_by_phone(phone);
+            if (!u_by_phone) {
+                return make_error_response(AppError::UserNotFound, "User not found with provided phone");
+            }
+            target_user_id = u_by_phone->user_id;
+        } else if (query_user_id > 0) {
+            auto u_by_id = DbRepository::instance().get_user_by_id(query_user_id);
+            if (!u_by_id) {
+                return make_error_response(AppError::UserNotFound, "User not found with provided user_id");
+            }
+            target_user_id = query_user_id;
         }
 
-        auto res = DbRepository::instance().get_admin_user_orders(target_uid, page, page_size, sort_order);
+        // 2. 日期范围解析
+        int64_t start_ms = 0;
+        if (!start_date.empty()) {
+            auto s_opt = parse_date_time_to_ms(start_date, false);
+            if (!s_opt) {
+                return make_error_response(AppError::InvalidParameters, "Invalid start_date format");
+            }
+            start_ms = *s_opt;
+        }
+
+        int64_t end_ms = 0;
+        if (!end_date.empty()) {
+            auto e_opt = parse_date_time_to_ms(end_date, true);
+            if (!e_opt) {
+                return make_error_response(AppError::InvalidParameters, "Invalid end_date format");
+            }
+            end_ms = *e_opt;
+        }
+
+        if (start_ms > 0 && end_ms > 0 && start_ms > end_ms) {
+            return make_error_response(AppError::InvalidParameters, "start_date cannot be greater than end_date");
+        }
+
+        // 3. 状态规格化
+        std::string status(status_filter);
+        for (auto& c : status) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+
+        page = std::max(1, page);
+        page_size = std::clamp(page_size, 1, 100);
+
+        auto res = DbRepository::instance().get_orders_admin_paged(
+            page, page_size, station_id_filter, status, target_user_id, start_ms, end_ms, sort_order
+        );
         if (!res) return make_error_response(res.error());
-
         return make_success_response(*res);
     }
 

@@ -1193,6 +1193,7 @@
 - **接口路径**：`GET /api/v1/charging/orders/{order_id}`
 - **认证方式**：`Bearer <user_token>`
 - **成功响应 (`200 OK`)**：
+  
   ```json
   {
     "code": 0,
@@ -1419,7 +1420,8 @@
 
 ---
 
-#### 3. 充电站上线 (恢复运营)
+#### 2. 充电站上线 (恢复运营)
+
 - **接口路径**：`POST /api/v1/admin/stations/{station_id}/online`
 - **认证方式**：`Bearer <admin_token>`
 - **路径参数**：
@@ -1447,7 +1449,8 @@
 
 ---
 
-#### 4. 充电站下线 (故障停运 / 维护及在途订单同步终止结算)
+#### 3. 充电站下线 (故障停运 / 维护及在途订单同步终止结算)
+
 - **接口路径**：`POST /api/v1/admin/stations/{station_id}/offline`
 - **认证方式**：`Bearer <admin_token>`
 - **路径参数**：
@@ -1699,16 +1702,21 @@
 
 ---
 
-### 3.6 平台全局订单审计、用户历史订单查询与一键退款
+### 3.6 平台全局订单审计与一键退款
 
-#### 1. 分页检索全平台充电订单
+#### 1. 分页检索全平台充电订单 (唯一订单查询接口)
 - **接口路径**：`GET /api/v1/admin/orders`
 - **认证方式**：`Bearer <admin_token>`
 - **查询参数 (Query Params)**：
-  - `page`, `page_size`
-  - `station_id` (可选)
-  - `order_status` (可选): `CHARGING`, `COMPLETED`, `UNSETTLED`, `REFUNDED`
-  - `start_date`, `end_date` (时间范围筛选)
+  - `page` (可选, 默认 `1`): 页码
+  - `page_size` (可选, 默认 `10`, 最大 `100`): 每页数量
+  - `station_id` (可选): 充电站 ID
+  - `status` (可选): 订单状态筛选，如 `CHARGING`, `COMPLETED`, `UNSETTLED`, `REFUNDED`（兼容旧参数名 `order_status`）
+  - `user_id` (可选): 按指定用户 ID 筛选订单
+  - `phone` (可选): 按指定用户手机号筛选订单。**重要约束**：若同时提供 `user_id` 与 `phone`，必须指向同一用户，若产生矛盾则直接返回 `400 Bad Request` 错误码
+  - `start_date` (可选): 筛选订单创建时间晚于/等于该时间的订单，支持格式：`YYYY-MM-DD` (自动规约为当日 00:00:00.000)、`YYYY-MM-DD HH:MM:SS`、或 Unix 时间戳 (秒/毫秒)
+  - `end_date` (可选): 筛选订单创建时间早于/等于该时间的订单，支持格式：`YYYY-MM-DD` (自动规约为当日 23:59:59.999)、`YYYY-MM-DD HH:MM:SS`、或 Unix 时间戳 (秒/毫秒)
+  - `sort_order` (可选, 默认 `desc`): `desc` (按创建时间从晚到早倒序排列), `asc` (按创建时间从早到晚升序排列)
 - **成功响应 (`200 OK`)**：
   ```json
   {
@@ -1723,69 +1731,6 @@
           "order_id": "ORD_20260902_1001",
           "user_id": 10001,
           "user_phone": "13800138000",
-          "station_name": "东软高新科技园超级充电站",
-          "pile_id": "P10101",
-          "charged_energy_kwh": 30.78,
-          "electricity_fee": 44.63,
-          "service_fee": 10.77,
-          "overtime_fee": 5.00,
-          "total_fee": 60.40,
-          "order_status": "COMPLETED",
-          "start_time": 1772607600000,
-          "end_time": 1772609400000
-        }
-      ]
-    },
-    "timestamp": 1772609500000
-  }
-  ```
-
----
-
-#### 2. 根据用户手机号 / 用户ID 分页查询用户历史订单 (按时间顺序)
-
-- **接口路径**：`GET /api/v1/admin/orders/user`
-- **认证方式**：`Bearer <admin_token>`
-- **查询参数 (Query Params)**：
-  - `user_id` (可选): 用户 ID (`user_id` 与 `phone` 至少提供一个)
-  - `phone` (可选): 用户 11 位手机号
-  - `page` (可选, 默认 `1`): 页码
-  - `page_size` (可选, 默认 `10`): 每页数量
-  - `sort_order` (可选, 默认 `asc`): `asc` (按创建时间从早到晚升序排列), `desc` (按创建时间倒序)
-- **成功响应 (`200 OK`)**：
-  ```json
-  {
-    "code": 0,
-    "msg": "success",
-    "data": {
-      "user_id": 10001,
-      "phone": "13800138000",
-      "nickname": "极速车主_10001",
-      "total": 2,
-      "page": 1,
-      "page_size": 10,
-      "sort_order": "asc",
-      "orders": [
-        {
-          "order_id": "ORD_20260901_0001",
-          "station_id": 101,
-          "station_name": "东软高新科技园超级充电站",
-          "pile_id": "P10102",
-          "pile_type": "FAST",
-          "order_status": "COMPLETED",
-          "start_time": 1772520000000,
-          "end_time": 1772521800000,
-          "duration_minutes": 30,
-          "charged_energy_kwh": 25.00,
-          "electricity_fee": 36.25,
-          "service_fee": 8.75,
-          "overtime_fee": 0.00,
-          "total_fee": 45.00,
-          "total_fee_cents": 4500,
-          "settled_at": 1772521810000
-        },
-        {
-          "order_id": "ORD_20260902_1001",
           "station_id": 101,
           "station_name": "东软高新科技园超级充电站",
           "pile_id": "P10101",
@@ -1797,6 +1742,7 @@
           "charged_energy_kwh": 30.78,
           "electricity_fee": 44.63,
           "service_fee": 10.77,
+          "overtime_minutes": 10,
           "overtime_fee": 5.00,
           "total_fee": 60.40,
           "total_fee_cents": 6040,
@@ -1808,12 +1754,16 @@
   }
   ```
 - **异常响应**：
-  - `400 Bad Request` (`code: 10003`)：`"Either user_id or phone must be provided"`
-  - `404 Not Found` (`code: 10001`)：`"User not found"`
+  - `400 Bad Request` (`code: 50006`)：
+    - `"Provided user_id and phone are contradictory"`（提供的 `user_id` 与 `phone` 矛盾）
+    - `"start_date cannot be greater than end_date"`（起始时间晚于结束时间）
+    - `"Invalid start_date format"` / `"Invalid end_date format"`（时间格式错误）
+  - `404 Not Found` (`code: 10001`)：
+    - `"User not found with provided phone"` / `"User not found with provided user_id"`（单传 `phone` 或 `user_id` 但用户不存在）
 
 ---
 
-#### 3. 管理员对指定订单一键退款
+#### 2. 管理员对指定订单一键退款
 - **接口路径**：`POST /api/v1/admin/orders/{order_id}/refund`
 - **认证方式**：`Bearer <admin_token>`
 - **业务逻辑**：

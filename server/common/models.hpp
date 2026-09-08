@@ -406,6 +406,8 @@ struct SettleOrderResponseData {
 
 struct OrderItemDTO {
     std::string order_id;
+    int64_t user_id{0};
+    std::string user_phone;
     int64_t station_id{0};
     std::string station_name;
     std::string pile_id;

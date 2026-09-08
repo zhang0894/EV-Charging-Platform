@@ -129,6 +129,8 @@ CREATE INDEX IF NOT EXISTS idx_orders_user_id ON charging_orders(user_id, create
 CREATE INDEX IF NOT EXISTS idx_orders_station_id ON charging_orders(station_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_orders_pile_id ON charging_orders(pile_id);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON charging_orders(order_status);
+CREATE INDEX IF NOT EXISTS idx_orders_created_at ON charging_orders(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_status_created ON charging_orders(order_status, created_at DESC);
 
 -- 7. 充电桩预约表
 CREATE TABLE IF NOT EXISTS pile_reservations (

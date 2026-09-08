@@ -202,7 +202,7 @@ int main() {
     std::println("  [PASS] 充电桩远程重启指令下发成功");
 
     // 用户历史订单查询 (按时间正序)
-    auto admin_user_orders_req = make_req(http::verb::get, std::format("/api/v1/admin/orders/user?user_id={}&sort_order=asc", uid), "", admin_token);
+    auto admin_user_orders_req = make_req(http::verb::get, std::format("/api/v1/admin/orders?user_id={}&sort_order=asc", uid), "", admin_token);
     auto admin_user_orders_resp = router.dispatch(admin_user_orders_req);
     assert(admin_user_orders_resp.result() == http::status::ok);
     std::println("  [PASS] 管理员按用户ID查询历史订单成功 (时间正序排列)");

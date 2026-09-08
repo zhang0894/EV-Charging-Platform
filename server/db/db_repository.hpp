@@ -81,7 +81,16 @@ public:
     );
     Result<SettleOrderResponseData> settle_order_with_wallet(std::string_view order_id, std::string_view idempotent_key);
     Result<OrderListResponseData> get_user_orders_paged(int64_t user_id, int page, int page_size, std::string_view status_filter = "", std::string_view sort_order = "desc");
-    Result<OrderListResponseData> get_orders_admin_paged(int page, int page_size, int64_t station_id_filter = 0, std::string_view status_filter = "", std::string_view start_date = "", std::string_view end_date = "");
+    Result<OrderListResponseData> get_orders_admin_paged(
+        int page,
+        int page_size,
+        int64_t station_id_filter = 0,
+        std::string_view status_filter = "",
+        int64_t user_id_filter = 0,
+        int64_t start_date_ms = 0,
+        int64_t end_date_ms = 0,
+        std::string_view sort_order = "desc"
+    );
     Result<AdminUserOrdersResponseData> get_admin_user_orders(int64_t user_id, int page, int page_size, std::string_view sort_order = "asc");
     Result<AdminOrderRefundResponseData> refund_order_with_wallet(std::string_view order_id, int64_t refund_amount_cents, int64_t operator_id, std::string_view idempotent_key, std::string_view reason);
 
