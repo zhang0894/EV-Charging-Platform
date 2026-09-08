@@ -426,6 +426,23 @@ void OrderManagementWidget::onQueryClicked()
     applyFiltersAndFetch(1);
 }
 
+// ------------- 外部跳转入口：按用户筛选订单（跨页联动） -------------
+void OrderManagementWidget::setFilterByUser(qint64 userId, const QString &phone)
+{
+    // 优先使用 user_id，phone 作为备选（与工具栏"互斥填一项"的约定一致）
+    if (userId > 0) {
+        m_userIdEdit->setText(QString::number(userId));
+        m_phoneEdit->clear();
+    } else if (!phone.trimmed().isEmpty()) {
+        m_phoneEdit->setText(phone.trimmed());
+        m_userIdEdit->clear();
+    } else {
+        return; // 无有效条件，不发起查询
+    }
+    // 复用"查用户订单"的校验与查询逻辑（自动切到用户模式并重置第 1 页）
+    onUserQueryClicked();
+}
+
 void OrderManagementWidget::onUserQueryClicked()
 {
     // 按用户查询（第二期）：用户ID 与手机号互斥，只能填其中一项

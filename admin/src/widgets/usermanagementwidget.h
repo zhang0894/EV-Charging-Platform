@@ -43,6 +43,15 @@ public:
      */
     void setAuthToken(const QString &token);
 
+signals:
+    /**
+     * @brief 跨页跳转请求：查看某用户的订单（由"查看订单"按钮触发）
+     * @param userId 用户ID（优先使用）
+     * @param phone  手机号（user_id 无效时的备选）
+     * 由 MainWindow 连接 showOrdersForUser()，切换到订单管理页并自动筛选。
+     */
+    void viewOrdersRequested(int userId, const QString &phone);
+
 private slots:
     void onQueryClicked();            // 搜索框"查询"按钮
     void onRefreshClicked();          // 刷新当前页

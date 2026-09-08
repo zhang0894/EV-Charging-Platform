@@ -97,6 +97,10 @@ MainWindow::MainWindow(const QString &authToken, QWidget *parent)
     // 将管理员 Token 传递给 OrderManagementModel（内部随即拉取第 1 页订单列表）
     orderPage->setAuthToken(authToken);
 
+    // 跨页联动：用户管理"查看订单" → 跳转订单管理页并自动按该用户筛选
+    connect(userPage, &UserManagementWidget::viewOrdersRequested,
+            this, &MainWindow::showOrdersForUser);
+
     appendLog(tr("系统启动完成，欢迎使用充电桩运营管理平台"));
 }
 
@@ -129,6 +133,20 @@ void MainWindow::onMenuClicked(int id)
         tr("充电站管理"), tr("用户管理"), tr("订单管理")
     };
     appendLog(tr("切换页面：%1").arg(names.value(id, tr("未知"))));
+}
+
+void MainWindow::showOrdersForUser(int userId, const QString &phone)
+{
+    // 与侧边栏菜单点击同一路径：同步按钮选中态 + 切换页面 + 记录日志
+    if (QAbstractButton *btn = m_menuGroup->button(5)) {
+        btn->setChecked(true);
+    }
+    onMenuClicked(5);
+
+    // 订单页填入筛选条件并自动发起查询（优先 user_id，phone 备选）
+    if (OrderManagementWidget *orderPage = findChild<OrderManagementWidget *>()) {
+        orderPage->setFilterByUser(userId, phone);
+    }
 }
 
 void MainWindow::appendLog(const QString &message)
