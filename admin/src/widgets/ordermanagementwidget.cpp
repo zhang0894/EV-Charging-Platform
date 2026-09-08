@@ -61,6 +61,14 @@ OrderManagementWidget::OrderManagementWidget(QWidget *parent)
     connect(m_model, &OrderManagementModel::errorOccurred,
             this, &OrderManagementWidget::onErrorOccurred);
 
+    // 日志转发：查询/操作事件 + 失败信息统一上抛主窗口日志区
+    connect(m_model, &OrderManagementModel::logRequested,
+            this, &OrderManagementWidget::logMessage);
+    connect(m_model, &OrderManagementModel::errorOccurred, this,
+            [this](const QString &msg) {
+                emit logMessage(tr("失败：%1").arg(msg));
+            });
+
     // 工具栏交互
     connect(m_btnQuery, &QPushButton::clicked, this, &OrderManagementWidget::onQueryClicked);
     connect(m_btnRefresh, &QPushButton::clicked, this, &OrderManagementWidget::onRefreshClicked);

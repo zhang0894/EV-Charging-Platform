@@ -27,6 +27,14 @@ PileStatusWidget::PileStatusWidget(QWidget *parent)
     connect(m_model, &PileStatusModel::errorOccurred,
             this, &PileStatusWidget::onErrorOccurred);
 
+    // 日志转发：查询/操作事件 + 失败信息统一上抛主窗口日志区
+    connect(m_model, &PileStatusModel::logRequested,
+            this, &PileStatusWidget::logMessage);
+    connect(m_model, &PileStatusModel::errorOccurred, this,
+            [this](const QString &msg) {
+                emit logMessage(tr("失败：%1").arg(msg));
+            });
+
     connect(m_btnRefresh, &QPushButton::clicked, this, [this]() {
         m_model->fetchData();
     });

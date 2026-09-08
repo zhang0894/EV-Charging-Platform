@@ -56,6 +56,10 @@ public:
      */
     void setFilterByUser(qint64 userId, const QString &phone);
 
+signals:
+    /** 日志转发：Model 的查询/操作事件与失败信息（由 MainWindow 连接 appendLog） */
+    void logMessage(const QString &message);
+
 private slots:
     void onQueryClicked();          // "查询"按钮：全局列表（状态/站点/日期筛选，重置第 1 页）
     void onUserQueryClicked();      // "查用户订单"按钮：按用户ID/手机号查询（第二期）

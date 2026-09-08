@@ -106,6 +106,13 @@ void StationManagementModel::fetchStations(int page, int pageSize,
     qDebug().noquote() << "[StationManagementModel] fetchStations() -"
                        << url.toString();
 
+    QStringList conds;
+    if (!m_nameFilter.isEmpty())   conds << tr("站名包含“%1”").arg(m_nameFilter);
+    if (m_statusFilter >= 1)      conds << (m_statusFilter == 1 ? tr("正常运营") : tr("暂停营业"));
+    emit logRequested(conds.isEmpty()
+        ? tr("充电站列表查询")
+        : tr("充电站列表查询：%1").arg(conds.join(QStringLiteral("，"))));
+
     QNetworkRequest request(url);
     // prepareRequest 由 TokenManager 内部完成（注入 Authorization 头）；
     // 401/40001/40002 自动刷新 Token 并重试，回调最终收到重试后的 reply。
@@ -146,6 +153,11 @@ void StationManagementModel::addMockStation(const StationInfo &info)
 
 void StationManagementModel::setStationStatus(int stationId, int newStatus)
 {
+    // 日志：上下线远程操作（真实电站与模拟电站统一在此记录，已发起）
+    emit logRequested(tr("充电站%1操作：站ID %2（已发起）")
+                          .arg(newStatus == 1 ? tr("上线") : tr("下线"))
+                          .arg(stationId));
+
     // 模拟电站：只改内存状态，不调用真实 API
     if (stationId < 0) {
         for (StationInfo &s : m_mockStations) {
@@ -199,6 +211,10 @@ void StationManagementModel::fetchStationSales(int stationId, const QString &tim
 
     qDebug().noquote() << "[StationManagementModel] fetchStationSales() -"
                        << url.toString();
+
+    // 日志：充电站详情弹窗销售数据查询（time_range: today/7d/30d）
+    emit logRequested(tr("充电站销售数据查询：站ID %1，范围 %2")
+                          .arg(stationId).arg(timeRange));
 
     QNetworkRequest request(url);
     TokenManager::instance()->get(request, [this, stationId](QNetworkReply *reply) {

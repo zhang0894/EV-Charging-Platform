@@ -43,6 +43,10 @@ public:
      */
     void setAuthToken(const QString &token);
 
+signals:
+    /** 日志转发：Model 的查询/操作事件与失败信息（由 MainWindow 连接 appendLog） */
+    void logMessage(const QString &message);
+
 private slots:
     void onQueryClicked();             // "查询"按钮：重置第 1 页
     void onRefreshClicked();           // "刷新"按钮：刷新当前页

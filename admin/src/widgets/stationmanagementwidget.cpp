@@ -53,11 +53,27 @@ StationManagementWidget::StationManagementWidget(QWidget *parent)
     connect(m_model, &StationManagementModel::errorOccurred,
             this, &StationManagementWidget::onErrorOccurred);
 
+    // 日志转发：查询/操作事件 + 失败信息统一上抛主窗口日志区
+    connect(m_model, &StationManagementModel::logRequested,
+            this, &StationManagementWidget::logMessage);
+    connect(m_model, &StationManagementModel::errorOccurred, this,
+            [this](const QString &msg) {
+                emit logMessage(tr("失败：%1").arg(msg));
+            });
+
     // 详情弹窗"电桩列表"Tab 的数据源（复用 PileManagementModel，传 station_id 拉取）
     connect(m_pileListModel, &PileManagementModel::pilesReady,
             this, &StationManagementWidget::onStationPilesReady);
     connect(m_pileListModel, &PileManagementModel::errorOccurred,
             this, &StationManagementWidget::onErrorOccurred);
+
+    // 详情弹窗内电桩列表的查询/失败同样纳入日志（站ID 条件已在 Model 侧记录）
+    connect(m_pileListModel, &PileManagementModel::logRequested,
+            this, &StationManagementWidget::logMessage);
+    connect(m_pileListModel, &PileManagementModel::errorOccurred, this,
+            [this](const QString &msg) {
+                emit logMessage(tr("失败：%1").arg(msg));
+            });
 
     // 工具栏交互
     connect(m_btnQuery, &QPushButton::clicked, this, &StationManagementWidget::onQueryClicked);
@@ -597,8 +613,8 @@ void StationManagementWidget::onSalesDataReady(const QJsonObject &data, int stat
         target = m_monthTable;
     }
     if (!target) {
-        qWarning().noquote() << "[StationManagementWidget] 销售数据无对应 Tab, 原始响应:"
-                             << raw;
+        // 异常兜底：无法归位到任何 Tab，输出到界面日志区（含原始响应便于排障）
+        emit logMessage(tr("失败：销售数据无对应 Tab，原始响应：%1").arg(raw));
         return;
     }
 

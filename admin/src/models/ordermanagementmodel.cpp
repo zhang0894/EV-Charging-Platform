@@ -145,6 +145,21 @@ void OrderManagementModel::fetchOrders(int page, int pageSize, int stationId,
     qDebug().noquote() << "[OrderManagementModel] fetchOrders() -"
                        << url.toString();
 
+    QStringList conds;
+    if (stationId > 0)            conds << tr("站ID %1").arg(stationId);
+    if (!m_orderStatus.isEmpty()) conds << (m_orderStatus == "CHARGING"  ? tr("充电中")
+                                         : m_orderStatus == "UNSETTLED" ? tr("待结算")
+                                         : m_orderStatus == "COMPLETED"  ? tr("已完成")
+                                         : m_orderStatus == "REFUNDED"   ? tr("已退款")
+                                         : m_orderStatus);
+    if (!m_startDate.isEmpty() || !m_endDate.isEmpty()) {
+        conds << tr("日期 %1 ~ %2").arg(m_startDate.isEmpty() ? tr("不限") : m_startDate,
+                                        m_endDate.isEmpty()   ? tr("不限") : m_endDate);
+    }
+    emit logRequested(conds.isEmpty()
+        ? tr("订单列表查询")
+        : tr("订单列表查询：%1").arg(conds.join(QStringLiteral("，"))));
+
     QNetworkRequest request(url);
     // prepareRequest 由 TokenManager 内部完成（注入 Authorization 头）；
     // 401/40001/40002 自动刷新 Token 并重试，回调最终收到重试后的 reply。
@@ -186,6 +201,12 @@ void OrderManagementModel::fetchOrdersByUser(qint64 userId, const QString &phone
 
     qDebug().noquote() << "[OrderManagementModel] fetchOrdersByUser() -"
                        << url.toString();
+
+    if (userId > 0) {
+        emit logRequested(tr("订单按用户查询：用户ID %1").arg(userId));
+    } else {
+        emit logRequested(tr("订单按用户查询：手机号 %1").arg(ph));
+    }
 
     QNetworkRequest request(url);
     TokenManager::instance()->get(request, [this](QNetworkReply *reply) {
@@ -288,6 +309,10 @@ void OrderManagementModel::refundOrder(const QString &orderId, double refundAmou
 
     qDebug().noquote() << "[OrderManagementModel] refundOrder() -"
                        << url.toString() << "payload:" << payload;
+
+    // 日志：一键退款远程操作（reason 可能含敏感信息，不记录）
+    emit logRequested(tr("订单退款：订单 %1，金额 %2 元（已发起）")
+                          .arg(orderId).arg(refundAmount));
 
     TokenManager::instance()->post(request, payload, [this, orderId](QNetworkReply *reply) {
         handleRefundReply(reply, orderId);

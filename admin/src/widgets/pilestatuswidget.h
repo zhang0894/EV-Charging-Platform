@@ -47,6 +47,10 @@ public:
 protected:
     void showEvent(QShowEvent *event) override;
 
+signals:
+    /** 日志转发：Model 的查询/操作事件与失败信息（由 MainWindow 连接 appendLog） */
+    void logMessage(const QString &message);
+
 private slots:
     void onDataReady(const QJsonObject &data);
     void onErrorOccurred(const QString &msg);

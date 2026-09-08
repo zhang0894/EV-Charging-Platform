@@ -16,7 +16,6 @@ MainWindow::MainWindow(const QString &authToken, QWidget *parent)
     , m_menuGroup(new QButtonGroup(this))
 {
     ui->setupUi(this);
-//   qDebug() << "=== Token: " << authToken;  显示token调试专用
     // 设置窗口图标与默认尺寸
     setWindowIcon(QIcon(QStringLiteral(":/img/app-logo.svg")));
     resize(1280, 800);
@@ -56,6 +55,10 @@ MainWindow::MainWindow(const QString &authToken, QWidget *parent)
     // 将管理员 Token 传递给 PileStatusModel（首次拉取由页面 showEvent 触发）
     pileStatusPage->setAuthToken(authToken);
 
+    // 页面日志（查询/操作事件与失败信息）汇入底部日志区
+    connect(pileStatusPage, &PileStatusWidget::logMessage,
+            this, &MainWindow::appendLog);
+
     // 充电桩管理页（索引 2）：用 PileManagementWidget 替换占位页，
     // 菜单按钮 btnPileManage(id=2) 与页面索引的映射关系保持不变。
     PileManagementWidget *pilePage = new PileManagementWidget(this);
@@ -66,6 +69,10 @@ MainWindow::MainWindow(const QString &authToken, QWidget *parent)
 
     // 将管理员 Token 传递给 PileManagementModel（内部随即拉取第 1 页充电桩列表）
     pilePage->setAuthToken(authToken);
+
+    // 页面日志（查询/操作事件与失败信息）汇入底部日志区
+    connect(pilePage, &PileManagementWidget::logMessage,
+            this, &MainWindow::appendLog);
 
     // 充电站管理页（索引 3）：用 StationManagementWidget 替换占位页，
     // 菜单按钮 btnStationManage(id=3) 与页面索引的映射关系保持不变。
@@ -78,6 +85,10 @@ MainWindow::MainWindow(const QString &authToken, QWidget *parent)
     // 将管理员 Token 传递给 StationManagementModel（内部随即拉取第 1 页充电站列表）
     stationPage->setAuthToken(authToken);
 
+    // 页面日志（查询/操作事件与失败信息）汇入底部日志区
+    connect(stationPage, &StationManagementWidget::logMessage,
+            this, &MainWindow::appendLog);
+
     // 用户管理页（索引 4）：用 UserManagementWidget 替换占位页，
     // 菜单按钮 btnUserManage(id=4) 与页面索引的映射关系保持不变。
     UserManagementWidget *userPage = new UserManagementWidget(this);
@@ -89,6 +100,10 @@ MainWindow::MainWindow(const QString &authToken, QWidget *parent)
     // 将管理员 Token 传递给 UserManagementModel（内部随即拉取第 1 页用户列表）
     userPage->setAuthToken(authToken);
 
+    // 页面日志（查询/操作事件与失败信息）汇入底部日志区
+    connect(userPage, &UserManagementWidget::logMessage,
+            this, &MainWindow::appendLog);
+
     // 订单管理页（索引 5）：contentStack 原有 5 个页面（0-4），订单管理为
     // 新追加的第 6 页（索引 5），侧边栏按钮 btnOrderManage(id=5) 与之对应。
     OrderManagementWidget *orderPage = new OrderManagementWidget(this);
@@ -96,6 +111,10 @@ MainWindow::MainWindow(const QString &authToken, QWidget *parent)
 
     // 将管理员 Token 传递给 OrderManagementModel（内部随即拉取第 1 页订单列表）
     orderPage->setAuthToken(authToken);
+
+    // 页面日志（查询/操作事件与失败信息）汇入底部日志区
+    connect(orderPage, &OrderManagementWidget::logMessage,
+            this, &MainWindow::appendLog);
 
     // 跨页联动：用户管理"查看订单" → 跳转订单管理页并自动按该用户筛选
     connect(userPage, &UserManagementWidget::viewOrdersRequested,
