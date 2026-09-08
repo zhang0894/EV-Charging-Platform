@@ -422,25 +422,33 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
             return AdminController::handle_adjust_user_wallet(target_uid, admin_uid, req);
         }
 
-        // 管理员全局订单搜索
+        // 管理员全局订单搜索 (唯一订单检索接口，支持按电站、状态、用户ID、手机号、起止日期筛选及排序)
         if (path == "/api/v1/admin/orders" && method == http::verb::get) {
-            int page = query.contains("page") ? std::stoi(query["page"]) : 1;
-            int page_size = query.contains("page_size") ? std::stoi(query["page_size"]) : 10;
-            int64_t sid = query.contains("station_id") ? std::stoll(query["station_id"]) : 0;
-            std::string st = query.contains("status") ? query["status"] : "";
+            auto parse_i64 = [](const std::string& s, int64_t def = 0) -> int64_t {
+                try { return s.empty() ? def : std::stoll(s); } catch (...) { return def; }
+            };
+            auto parse_i32 = [](const std::string& s, int def = 0) -> int {
+                try { return s.empty() ? def : std::stoi(s); } catch (...) { return def; }
+            };
+
+            int page = query.contains("page") ? parse_i32(query["page"], 1) : 1;
+            int page_size = query.contains("page_size") ? parse_i32(query["page_size"], 10) : 10;
+            int64_t sid = query.contains("station_id") ? parse_i64(query["station_id"], 0) : 0;
+            int64_t uid = query.contains("user_id") ? parse_i64(query["user_id"], 0) : 0;
+            std::string phone = query.contains("phone") ? query["phone"] : "";
+
+            std::string st;
+            if (query.contains("status")) {
+                st = query["status"];
+            } else if (query.contains("order_status")) {
+                st = query["order_status"];
+            }
+
             std::string start_d = query.contains("start_date") ? query["start_date"] : "";
             std::string end_d = query.contains("end_date") ? query["end_date"] : "";
-            return AdminController::handle_get_orders(page, page_size, sid, st, start_d, end_d);
-        }
+            std::string sort = query.contains("sort_order") ? query["sort_order"] : "desc";
 
-        // 管理员按手机号/用户ID查询历史订单: /api/v1/admin/orders/user
-        if (path == "/api/v1/admin/orders/user" && method == http::verb::get) {
-            int64_t target_uid = query.contains("user_id") ? std::stoll(query["user_id"]) : 0;
-            std::string phone = query.contains("phone") ? query["phone"] : "";
-            int page = query.contains("page") ? std::stoi(query["page"]) : 1;
-            int page_size = query.contains("page_size") ? std::stoi(query["page_size"]) : 10;
-            std::string sort = query.contains("sort_order") ? query["sort_order"] : "asc";
-            return AdminController::handle_get_user_historical_orders(target_uid, phone, page, page_size, sort);
+            return AdminController::handle_get_orders(page, page_size, sid, st, uid, phone, start_d, end_d, sort);
         }
 
         // 管理员指定订单一键退款: /api/v1/admin/orders/{order_id}/refund

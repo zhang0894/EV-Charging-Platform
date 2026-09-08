@@ -1535,8 +1535,10 @@ Result<OrderListResponseData> DbRepository::get_orders_admin_paged(
     int page_size,
     int64_t station_id_filter,
     std::string_view status_filter,
-    std::string_view start_date,
-    std::string_view end_date
+    int64_t user_id_filter,
+    int64_t start_date_ms,
+    int64_t end_date_ms,
+    std::string_view sort_order
 ) {
     auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
@@ -1547,18 +1549,66 @@ Result<OrderListResponseData> DbRepository::get_orders_admin_paged(
         where += std::format(" AND o.station_id = {}", station_id_filter);
     }
     if (!status_filter.empty()) {
-        where += std::format(" AND o.order_status = '{}'", status_filter);
+        std::string safe_st;
+        for (char c : status_filter) {
+            if (c == '\'') safe_st += "''";
+            else safe_st += c;
+        }
+        where += std::format(" AND o.order_status = '{}'", safe_st);
+    }
+    if (user_id_filter > 0) {
+        where += std::format(" AND o.user_id = {}", user_id_filter);
+    }
+    if (start_date_ms > 0) {
+        where += std::format(" AND o.created_at >= {}", start_date_ms);
+    }
+    if (end_date_ms > 0) {
+        where += std::format(" AND o.created_at <= {}", end_date_ms);
     }
 
-    std::string count_sql = std::format("SELECT COUNT(*) FROM charging_orders o {};", where);
-    PgResultGuard count_res(conn->exec(count_sql.c_str()));
-    int64_t total = count_res.is_ok() && count_res.rows() > 0 ? std::stoll(count_res.value(0, 0)) : 0;
+    std::string sort_dir = (sort_order == "asc" || sort_order == "ASC") ? "ASC" : "DESC";
+
+    bool has_filter = (station_id_filter > 0 || !status_filter.empty() || user_id_filter > 0 || start_date_ms > 0 || end_date_ms > 0);
+    int64_t total = 0;
+    if (!has_filter) {
+        auto cached_cnt = RedisCache::instance().get("admin:orders:count:all");
+        if (cached_cnt && !cached_cnt->empty()) {
+            try {
+                total = std::stoll(*cached_cnt);
+            } catch (...) {
+                total = 0;
+            }
+        }
+    }
+
+    if (total == 0 || has_filter) {
+        std::string count_sql = std::format("SELECT COUNT(*) FROM charging_orders o {};", where);
+        PgResultGuard count_res(conn->exec(count_sql.c_str()));
+        total = count_res.is_ok() && count_res.rows() > 0 ? std::stoll(count_res.value(0, 0)) : 0;
+        if (!has_filter && total > 0) {
+            RedisCache::instance().set("admin:orders:count:all", std::to_string(total), 60);
+        }
+    }
 
     std::string sql = std::format(
-        "SELECT o.order_id, o.station_id, s.station_name, o.pile_id, p.type, o.order_status, o.start_time, o.end_time, o.charged_energy_kwh, o.electricity_fee_cents, o.service_fee_cents, o.overtime_duration_minutes, o.overtime_fee_cents, o.total_fee_cents, o.settled_at "
-        "FROM charging_orders o LEFT JOIN stations s ON o.station_id = s.station_id LEFT JOIN piles p ON o.pile_id = p.pile_id "
-        "{} ORDER BY o.created_at DESC LIMIT {} OFFSET {};",
-        where, page_size, offset
+        "SELECT po.order_id, po.user_id, COALESCE(u.phone, ''), po.station_id, COALESCE(s.station_name, ''), "
+        "po.pile_id, COALESCE(p.type, 'FAST'), po.order_status, po.start_time, po.end_time, "
+        "po.charged_energy_kwh, po.electricity_fee_cents, po.service_fee_cents, po.overtime_duration_minutes, "
+        "po.overtime_fee_cents, po.total_fee_cents, po.settled_at "
+        "FROM ("
+        "  SELECT o.order_id, o.user_id, o.station_id, o.pile_id, o.order_status, o.start_time, o.end_time, "
+        "         o.charged_energy_kwh, o.electricity_fee_cents, o.service_fee_cents, o.overtime_duration_minutes, "
+        "         o.overtime_fee_cents, o.total_fee_cents, o.settled_at, o.created_at "
+        "  FROM charging_orders o "
+        "  {} "
+        "  ORDER BY o.created_at {}, o.order_id {} "
+        "  LIMIT {} OFFSET {}"
+        ") po "
+        "LEFT JOIN stations s ON po.station_id = s.station_id "
+        "LEFT JOIN piles p ON po.pile_id = p.pile_id "
+        "LEFT JOIN users u ON po.user_id = u.user_id "
+        "ORDER BY po.created_at {}, po.order_id {};",
+        where, sort_dir, sort_dir, page_size, offset, sort_dir, sort_dir
     );
 
     PgResultGuard res(conn->exec(sql.c_str()));
@@ -1569,30 +1619,49 @@ Result<OrderListResponseData> DbRepository::get_orders_admin_paged(
     data.page = page;
     data.page_size = page_size;
 
+    auto parse_ll = [&](int row, int col) -> int64_t {
+        const char* v = res.value(row, col);
+        return (v && *v) ? std::stoll(v) : 0LL;
+    };
+    auto parse_d = [&](int row, int col) -> double {
+        const char* v = res.value(row, col);
+        return (v && *v) ? std::stod(v) : 0.0;
+    };
+    auto parse_i = [&](int row, int col) -> int {
+        const char* v = res.value(row, col);
+        return (v && *v) ? std::stoi(v) : 0;
+    };
+    auto parse_str = [&](int row, int col) -> std::string {
+        const char* v = res.value(row, col);
+        return v ? std::string(v) : std::string();
+    };
+
     for (int i = 0; i < res.rows(); ++i) {
-        int64_t st = std::stoll(res.value(i, 6));
-        int64_t et = std::stoll(res.value(i, 7));
+        int64_t st = parse_ll(i, 8);
+        int64_t et = parse_ll(i, 9);
         int duration_mins = et > st ? static_cast<int>((et - st) / 60000) : 0;
-        int64_t total_fee = std::stoll(res.value(i, 13));
+        int64_t total_fee = parse_ll(i, 15);
 
         data.orders.push_back(OrderItemDTO{
-            .order_id = res.value(i, 0),
-            .station_id = std::stoll(res.value(i, 1)),
-            .station_name = res.value(i, 2),
-            .pile_id = res.value(i, 3),
-            .pile_type = res.value(i, 4),
-            .order_status = res.value(i, 5),
+            .order_id = parse_str(i, 0),
+            .user_id = parse_ll(i, 1),
+            .user_phone = parse_str(i, 2),
+            .station_id = parse_ll(i, 3),
+            .station_name = parse_str(i, 4),
+            .pile_id = parse_str(i, 5),
+            .pile_type = parse_str(i, 6),
+            .order_status = parse_str(i, 7),
             .start_time = st,
             .end_time = et,
             .duration_minutes = duration_mins,
-            .charged_energy_kwh = std::stod(res.value(i, 8)),
-            .electricity_fee = cents_to_yuan(std::stoll(res.value(i, 9))),
-            .service_fee = cents_to_yuan(std::stoll(res.value(i, 10))),
-            .overtime_minutes = std::stoi(res.value(i, 11)),
-            .overtime_fee = cents_to_yuan(std::stoll(res.value(i, 12))),
+            .charged_energy_kwh = parse_d(i, 10),
+            .electricity_fee = cents_to_yuan(parse_ll(i, 11)),
+            .service_fee = cents_to_yuan(parse_ll(i, 12)),
+            .overtime_minutes = parse_i(i, 13),
+            .overtime_fee = cents_to_yuan(parse_ll(i, 14)),
             .total_fee = cents_to_yuan(total_fee),
             .total_fee_cents = total_fee,
-            .settled_at = std::stoll(res.value(i, 14))
+            .settled_at = parse_ll(i, 16)
         });
     }
 
