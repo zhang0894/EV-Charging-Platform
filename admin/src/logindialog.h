@@ -27,6 +27,8 @@ public:
 
     /** 登录成功后获取 access_token */
     QString token() const { return m_token; }
+    /** 登录成功后获取 refresh_token */
+    QString refreshToken() const { return m_refreshToken; }
 
 private slots:
     void onLoginClicked();
@@ -38,6 +40,7 @@ private:
     QLabel              *m_errorLabel;
     QNetworkAccessManager *m_networkManager;
     QString             m_token;
+    QString             m_refreshToken;
 };
 
 #endif // LOGINDIALOG_H

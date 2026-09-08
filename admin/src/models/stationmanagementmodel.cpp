@@ -1,9 +1,10 @@
 #include "stationmanagementmodel.h"
 
+#include "tokenmanager.h"
+
 #include <QDebug>
 #include <QDateTime>
 
-#include <QNetworkAccessManager>
 #include <QNetworkRequest>
 #include <QNetworkReply>
 #include <QUrl>
@@ -69,7 +70,9 @@ QStandardItemModel *StationManagementModel::getModel()
 
 void StationManagementModel::setAuthToken(const QString &token)
 {
-    m_authToken = token.trimmed();
+    // Token 由 TokenManager 单例统一管理（登录后由 main.cpp 设置），
+    // Model 不再保存 Token；首次拉取由 Widget 触发。
+    Q_UNUSED(token);
 }
 
 // ============================================================================
@@ -85,8 +88,6 @@ void StationManagementModel::fetchStations(int page, int pageSize,
     m_pageSize = qMax(1, pageSize);
     m_nameFilter = nameFilter.trimmed();
     m_statusFilter = statusFilter;
-
-    ensureNetworkManager();
 
     QUrl url(m_serverBase + QStringLiteral("/api/v1/stations/inquire"));
     QUrlQuery query;
@@ -106,10 +107,9 @@ void StationManagementModel::fetchStations(int page, int pageSize,
                        << url.toString();
 
     QNetworkRequest request(url);
-    prepareRequest(&request);
-
-    QNetworkReply *reply = m_networkManager->get(request);
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    // prepareRequest 由 TokenManager 内部完成（注入 Authorization 头）；
+    // 401/40001/40002 自动刷新 Token 并重试，回调最终收到重试后的 reply。
+    TokenManager::instance()->get(request, [this](QNetworkReply *reply) {
         handleStationsReply(reply);
     });
 }
@@ -122,7 +122,8 @@ void StationManagementModel::addMockStation(const StationInfo &info)
 {
     StationInfo s = info;
     s.station_id = m_nextMockId--;   // 模拟电站 ID 为负数：-1, -2, -3 ...
-    s.total_piles = 0;
+    // 注：total_piles 保留用户在新增对话框中填写的电桩数量（不填默认为 0），
+    // 不可在此清零；模拟电站无真实电桩在线，故在线/闲置数固定为 0。
     s.online_piles = 0;
     s.idle_piles = 0;
     s.online_rate = 0.0;
@@ -165,19 +166,16 @@ void StationManagementModel::setStationStatus(int stationId, int newStatus)
     }
 
     // 真实电站：POST /online 或 /offline
-    ensureNetworkManager();
-
     const QString action = (newStatus == 1)
         ? QStringLiteral("online") : QStringLiteral("offline");
     const QUrl url(m_serverBase
                    + QStringLiteral("/api/v1/admin/stations/%1/%2").arg(stationId).arg(action));
     QNetworkRequest request(url);
-    prepareRequest(&request);
 
-    QNetworkReply *reply = m_networkManager->post(request, QByteArray("{}"));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, stationId, newStatus]() {
-        handleStatusReply(reply, stationId, newStatus);
-    });
+    TokenManager::instance()->post(request, QByteArray("{}"),
+        [this, stationId, newStatus](QNetworkReply *reply) {
+            handleStatusReply(reply, stationId, newStatus);
+        });
 }
 
 // ============================================================================
@@ -193,8 +191,6 @@ void StationManagementModel::fetchStationSales(int stationId, const QString &tim
         return;
     }
 
-    ensureNetworkManager();
-
     QUrl url(m_serverBase
              + QStringLiteral("/api/v1/admin/stations/%1/sales-stats").arg(stationId));
     QUrlQuery query;
@@ -205,10 +201,7 @@ void StationManagementModel::fetchStationSales(int stationId, const QString &tim
                        << url.toString();
 
     QNetworkRequest request(url);
-    prepareRequest(&request);
-
-    QNetworkReply *reply = m_networkManager->get(request);
-    connect(reply, &QNetworkReply::finished, this, [this, reply, stationId]() {
+    TokenManager::instance()->get(request, [this, stationId](QNetworkReply *reply) {
         handleSalesReply(reply, stationId);
     });
 }
@@ -216,25 +209,6 @@ void StationManagementModel::fetchStationSales(int stationId, const QString &tim
 // ============================================================================
 // 内部辅助
 // ============================================================================
-
-void StationManagementModel::ensureNetworkManager()
-{
-    if (!m_networkManager) {
-        m_networkManager = new QNetworkAccessManager(this);
-    }
-}
-
-void StationManagementModel::prepareRequest(QNetworkRequest *request) const
-{
-    request->setHeader(QNetworkRequest::ContentTypeHeader,
-                       QStringLiteral("application/json"));
-    request->setRawHeader("Accept", "application/json");
-    // 受保护接口需携带 Bearer Token；未设置 Token 时不带头（本地联调用）
-    if (!m_authToken.isEmpty()) {
-        request->setRawHeader("Authorization",
-                              (QStringLiteral("Bearer ") + m_authToken).toUtf8());
-    }
-}
 
 QJsonObject StationManagementModel::stationInfoToJson(const StationInfo &info) const
 {
@@ -272,7 +246,7 @@ void StationManagementModel::populateStations(const QJsonArray &stations)
         const int totalPiles = s.value(QStringLiteral("total_piles")).toInt();
         const int idlePiles = s.value(QStringLiteral("idle_piles")).toInt();
         // 新接口无 online_rate 字段：可用率 = idle_piles / total_piles * 100；
-        // 模拟电站 total_piles=0、idle_piles=0，显示 0.0%。
+        // 模拟电站 idle_piles=0（无论用户填多少电桩数量），可用率显示 0.0%。
         double availRate = 0.0;
         if (totalPiles > 0) {
             availRate = idlePiles * 100.0 / totalPiles;

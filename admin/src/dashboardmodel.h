@@ -145,12 +145,6 @@ private:
     /** 初始化占位数据：汇总指标 + 7日 + 30日趋势（服务器数据到达前展示） */
     void initMockData();
 
-    /** 懒初始化 QNetworkAccessManager（以 this 为 parent，随 Model 生命周期释放） */
-    void ensureNetworkManager();
-
-    /** 为请求填充公共头（Content-Type / Accept / Authorization） */
-    void prepareRequest(QNetworkRequest *request) const;
-
     /** 发起核心指标汇总请求 */
     void requestSummary();
 
@@ -173,9 +167,6 @@ private:
     QVector<TrendPoint> m_data7d;            // 近7日数据集
     QVector<TrendPoint> m_data30d;           // 近30日数据集
     TimeRange m_currentRange = Last7Days;    // 当前加载的时间范围
-
-    QNetworkAccessManager *m_networkManager = nullptr; // HTTP 请求管理器（懒创建）
-    QString m_authToken;                    // 管理员 Bearer Token（可为空）
 
     // 服务器地址：当前写死，后续再改为可配置
     const QString m_serverBase = QStringLiteral("http://62.234.84.145:8080");

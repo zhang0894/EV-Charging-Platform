@@ -1,5 +1,7 @@
 #include "pilestatusmodel.h"
 
+#include "tokenmanager.h"
+
 #include <QDebug>
 
 #include <QNetworkAccessManager>
@@ -19,7 +21,9 @@ PileStatusModel::PileStatusModel(QObject *parent)
 
 void PileStatusModel::setAuthToken(const QString &token)
 {
-    m_authToken = token.trimmed();
+    // Token 由 TokenManager 单例统一管理，本模型不再单独保存。
+    // 首次拉取由 Widget 的 showEvent / 刷新按钮触发 fetchData()。
+    Q_UNUSED(token);
 }
 
 // ============================================================================
@@ -29,17 +33,14 @@ void PileStatusModel::setAuthToken(const QString &token)
 
 void PileStatusModel::fetchData()
 {
-    ensureNetworkManager();
-
     const QUrl url(m_serverBase
                    + QStringLiteral("/api/v1/admin/dashboard/pile-status-overview"));
     qDebug().noquote() << "[PileStatusModel] fetchData() -" << url.toString();
 
     QNetworkRequest request(url);
-    prepareRequest(&request);
+    // prepareRequest 由 TokenManager::get 内部完成（注入 Authorization 头）
 
-    QNetworkReply *reply = m_networkManager->get(request);
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    TokenManager::instance()->get(request, [this](QNetworkReply *reply) {
         handleReply(reply);
     });
 }
@@ -47,25 +48,6 @@ void PileStatusModel::fetchData()
 // ============================================================================
 // 内部辅助
 // ============================================================================
-
-void PileStatusModel::ensureNetworkManager()
-{
-    if (!m_networkManager) {
-        m_networkManager = new QNetworkAccessManager(this);
-    }
-}
-
-void PileStatusModel::prepareRequest(QNetworkRequest *request) const
-{
-    request->setHeader(QNetworkRequest::ContentTypeHeader,
-                       QStringLiteral("application/json"));
-    request->setRawHeader("Accept", "application/json");
-    // 受保护接口需携带 Bearer Token；未设置 Token 时不带头（本地联调用）
-    if (!m_authToken.isEmpty()) {
-        request->setRawHeader("Authorization",
-                              (QStringLiteral("Bearer ") + m_authToken).toUtf8());
-    }
-}
 
 void PileStatusModel::handleReply(QNetworkReply *reply)
 {

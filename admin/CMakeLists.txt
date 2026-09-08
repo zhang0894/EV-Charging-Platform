@@ -46,6 +46,10 @@ add_executable(ChargingPileAdmin
     src/models/stationmanagementmodel.h
     src/models/usermanagementmodel.cpp
     src/models/usermanagementmodel.h
+    src/models/ordermanagementmodel.cpp
+    src/models/ordermanagementmodel.h
+    src/tokenmanager.h
+    src/tokenmanager.cpp
     src/widgets/pilestatuswidget.cpp
     src/widgets/pilestatuswidget.h
     src/widgets/pilemanagementwidget.cpp
@@ -54,6 +58,8 @@ add_executable(ChargingPileAdmin
     src/widgets/stationmanagementwidget.h
     src/widgets/usermanagementwidget.cpp
     src/widgets/usermanagementwidget.h
+    src/widgets/ordermanagementwidget.cpp
+    src/widgets/ordermanagementwidget.h
     resources/resources.qrc
 )
 

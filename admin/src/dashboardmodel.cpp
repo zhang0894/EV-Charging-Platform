@@ -1,5 +1,7 @@
 #include "dashboardmodel.h"
 
+#include "tokenmanager.h"
+
 #include <QDebug>
 #include <QLocale>
 
@@ -91,8 +93,6 @@ void DashboardModel::loadFromServer()
 
 void DashboardModel::fetchData()
 {
-    ensureNetworkManager();
-
     qDebug().noquote() << "[DashboardModel] fetchData() - 开始从服务器拉取看板数据:"
                        << m_serverBase;
 
@@ -104,30 +104,10 @@ void DashboardModel::fetchData()
 
 void DashboardModel::setAuthToken(const QString &token)
 {
-    m_authToken = token.trimmed();
-    // Token 设置后自动发起数据拉取（登录成功 → setAuthToken → fetchData）
-    if (!m_authToken.isEmpty()) {
+    // Token 由 TokenManager 单例统一管理；这里仅在设置合法 Token 后触发数据拉取
+    // （登录成功 → setAuthToken → fetchData）。
+    if (!token.trimmed().isEmpty()) {
         fetchData();
-    }
-}
-
-void DashboardModel::ensureNetworkManager()
-{
-    if (!m_networkManager) {
-        // 以 this 为 parent，Model 析构时自动释放
-        m_networkManager = new QNetworkAccessManager(this);
-    }
-}
-
-void DashboardModel::prepareRequest(QNetworkRequest *request) const
-{
-    request->setHeader(QNetworkRequest::ContentTypeHeader,
-                       QStringLiteral("application/json"));
-    request->setRawHeader("Accept", "application/json");
-    // 文档 1.3 节：受保护接口需携带 Bearer Token；未设置 Token 时不带头（本地联调用）
-    if (!m_authToken.isEmpty()) {
-        request->setRawHeader("Authorization",
-                              (QStringLiteral("Bearer ") + m_authToken).toUtf8());
     }
 }
 
@@ -135,10 +115,9 @@ void DashboardModel::requestSummary()
 {
     const QUrl url(m_serverBase + QStringLiteral("/api/v1/admin/dashboard/summary"));
     QNetworkRequest request(url);
-    prepareRequest(&request);
+    // prepareRequest 由 TokenManager::get 内部完成（注入 Authorization 头）
 
-    QNetworkReply *reply = m_networkManager->get(request);
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    TokenManager::instance()->get(request, [this](QNetworkReply *reply) {
         handleSummaryReply(reply);
     });
 }
@@ -151,10 +130,9 @@ void DashboardModel::requestTrend(TimeRange range)
     url.setQuery(query);
 
     QNetworkRequest request(url);
-    prepareRequest(&request);
+    // prepareRequest 由 TokenManager::get 内部完成（注入 Authorization 头）
 
-    QNetworkReply *reply = m_networkManager->get(request);
-    connect(reply, &QNetworkReply::finished, this, [this, reply, range]() {
+    TokenManager::instance()->get(request, [this, range](QNetworkReply *reply) {
         handleTrendReply(reply, range);
     });
 }

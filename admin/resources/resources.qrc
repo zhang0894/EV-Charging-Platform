@@ -8,6 +8,7 @@
         <file>img/pile-manage.svg</file>
         <file>img/station-manage.svg</file>
         <file>img/user-manage.svg</file>
+        <file>img/order-manage.svg</file>
         <file>img/app-logo.svg</file>
     </qresource>
 </RCC>

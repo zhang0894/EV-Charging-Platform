@@ -137,12 +137,6 @@ signals:
     void errorOccurred(const QString &errorMsg);
 
 private:
-    /** 懒初始化 QNetworkAccessManager（以 this 为 parent，随 Model 释放） */
-    void ensureNetworkManager();
-
-    /** 为请求填充公共头（Content-Type / Accept / Authorization） */
-    void prepareRequest(QNetworkRequest *request) const;
-
     /** StationInfo -> 与 API 相同结构的 JSON（用于合并模拟数据） */
     QJsonObject stationInfoToJson(const StationInfo &info) const;
 
@@ -170,8 +164,6 @@ private:
     int m_nextMockId = -1;              // 模拟电站 ID 分配器（-1, -2, -3 ...）
 
     QStandardItemModel *m_tableModel = nullptr; // 表格数据源
-    QNetworkAccessManager *m_networkManager = nullptr; // HTTP 请求管理器（懒创建）
-    QString m_authToken;                // 管理员 Bearer Token
 
     // 服务器地址：当前写死，后续再改为可配置
     const QString m_serverBase = QStringLiteral("http://62.234.84.145:8080");

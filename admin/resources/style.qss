@@ -39,7 +39,8 @@ QPushButton#btnDashboard,
 QPushButton#btnPileStatus,
 QPushButton#btnPileManage,
 QPushButton#btnStationManage,
-QPushButton#btnUserManage {
+QPushButton#btnUserManage,
+QPushButton#btnOrderManage {
     text-align: left;
     padding: 14px 20px 14px 22px;
     border: none;
@@ -53,7 +54,8 @@ QPushButton#btnDashboard:hover,
 QPushButton#btnPileStatus:hover,
 QPushButton#btnPileManage:hover,
 QPushButton#btnStationManage:hover,
-QPushButton#btnUserManage:hover {
+QPushButton#btnUserManage:hover,
+QPushButton#btnOrderManage:hover {
     background-color: #f0f5ff;
     color: #1a5cff;
 }
@@ -63,7 +65,8 @@ QPushButton#btnDashboard:checked,
 QPushButton#btnPileStatus:checked,
 QPushButton#btnPileManage:checked,
 QPushButton#btnStationManage:checked,
-QPushButton#btnUserManage:checked {
+QPushButton#btnUserManage:checked,
+QPushButton#btnOrderManage:checked {
     background-color: #e8f0fe;
     border-left: 3px solid #2b7bff;
     color: #1a5cff;
@@ -75,7 +78,8 @@ QPushButton#btnDashboard,
 QPushButton#btnPileStatus,
 QPushButton#btnPileManage,
 QPushButton#btnStationManage,
-QPushButton#btnUserManage {
+QPushButton#btnUserManage,
+QPushButton#btnOrderManage {
     icon-size: 22px;
 }
 

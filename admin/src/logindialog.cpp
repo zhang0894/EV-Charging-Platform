@@ -105,6 +105,8 @@ void LoginDialog::onLoginClicked()
             // 登录成功：code == 0 且包含 access_token
             if (code == 0 && !accessToken.isEmpty()) {
                 m_token = accessToken;
+                m_refreshToken = root.value("data").toObject()
+                                     .value("refresh_token").toString();
                 accept();
                 return;
             }

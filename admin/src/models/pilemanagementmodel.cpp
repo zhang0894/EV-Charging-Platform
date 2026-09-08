@@ -1,8 +1,8 @@
 #include "pilemanagementmodel.h"
+#include "tokenmanager.h"
 
 #include <QDebug>
 
-#include <QNetworkAccessManager>
 #include <QNetworkRequest>
 #include <QNetworkReply>
 #include <QUrl>
@@ -111,7 +111,9 @@ QStandardItemModel *PileManagementModel::getModel()
 
 void PileManagementModel::setAuthToken(const QString &token)
 {
-    m_authToken = token.trimmed();
+    // Token 由 TokenManager 单例统一管理（登录后由 main.cpp 设置），
+    // Model 不再保存 Token；首次拉取由 Widget 触发。
+    Q_UNUSED(token);
 }
 
 // ============================================================================
@@ -127,8 +129,6 @@ void PileManagementModel::fetchPiles(int page, int pageSize, int stationId,
     m_pageSize = qMax(1, pageSize);
     m_statusFilter = statusFilter.trimmed().toUpper();
     m_typeFilter = typeFilter.trimmed().toUpper();
-
-    ensureNetworkManager();
 
     // 新接口：GET /api/v1/piles（旧 /api/v1/admin/piles 已移除，返回 404）
     QUrl url(m_serverBase + QStringLiteral("/api/v1/piles"));
@@ -149,10 +149,8 @@ void PileManagementModel::fetchPiles(int page, int pageSize, int stationId,
     qDebug().noquote() << "[PileManagementModel] fetchPiles() -" << url.toString();
 
     QNetworkRequest request(url);
-    prepareRequest(&request);
-
-    QNetworkReply *reply = m_networkManager->get(request);
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    // prepareRequest 由 TokenManager::get 内部统一处理
+    TokenManager::instance()->get(request, [this](QNetworkReply *reply) {
         handlePilesReply(reply);
     });
 }
@@ -164,12 +162,10 @@ void PileManagementModel::fetchPiles(int page, int pageSize, int stationId,
 
 void PileManagementModel::restartPile(const QString &pileId)
 {
-    ensureNetworkManager();
-
     const QUrl url(m_serverBase
                    + QStringLiteral("/api/v1/admin/piles/%1/restart").arg(pileId));
     QNetworkRequest request(url);
-    prepareRequest(&request);
+    // prepareRequest 由 TokenManager::post 内部统一处理
 
     const QByteArray body = QJsonDocument(
         QJsonObject{{QStringLiteral("reason"), QStringLiteral("管理员远程重启")}})
@@ -177,34 +173,15 @@ void PileManagementModel::restartPile(const QString &pileId)
 
     qDebug().noquote() << "[PileManagementModel] restartPile() -" << url.toString();
 
-    QNetworkReply *reply = m_networkManager->post(request, body);
-    connect(reply, &QNetworkReply::finished, this, [this, reply, pileId]() {
-        handleRestartReply(reply, pileId);
-    });
+    TokenManager::instance()->post(request, body,
+        [this, pileId](QNetworkReply *reply) {
+            handleRestartReply(reply, pileId);
+        });
 }
 
 // ============================================================================
 // 内部辅助
 // ============================================================================
-
-void PileManagementModel::ensureNetworkManager()
-{
-    if (!m_networkManager) {
-        m_networkManager = new QNetworkAccessManager(this);
-    }
-}
-
-void PileManagementModel::prepareRequest(QNetworkRequest *request) const
-{
-    request->setHeader(QNetworkRequest::ContentTypeHeader,
-                       QStringLiteral("application/json"));
-    request->setRawHeader("Accept", "application/json");
-    // 受保护接口需携带 Bearer Token；未设置 Token 时不带头（本地联调用）
-    if (!m_authToken.isEmpty()) {
-        request->setRawHeader("Authorization",
-                              (QStringLiteral("Bearer ") + m_authToken).toUtf8());
-    }
-}
 
 void PileManagementModel::populatePiles(const QJsonArray &piles)
 {

@@ -5,6 +5,7 @@
 #include "pilemanagementwidget.h"
 #include "stationmanagementwidget.h"
 #include "usermanagementwidget.h"
+#include "ordermanagementwidget.h"
 #include "ui_mainwindow.h"
 
 #include <QDateTime>
@@ -88,6 +89,14 @@ MainWindow::MainWindow(const QString &authToken, QWidget *parent)
     // 将管理员 Token 传递给 UserManagementModel（内部随即拉取第 1 页用户列表）
     userPage->setAuthToken(authToken);
 
+    // 订单管理页（索引 5）：contentStack 原有 5 个页面（0-4），订单管理为
+    // 新追加的第 6 页（索引 5），侧边栏按钮 btnOrderManage(id=5) 与之对应。
+    OrderManagementWidget *orderPage = new OrderManagementWidget(this);
+    ui->contentStack->addWidget(orderPage);
+
+    // 将管理员 Token 传递给 OrderManagementModel（内部随即拉取第 1 页订单列表）
+    orderPage->setAuthToken(authToken);
+
     appendLog(tr("系统启动完成，欢迎使用充电桩运营管理平台"));
 }
 
@@ -98,12 +107,13 @@ MainWindow::~MainWindow()
 
 void MainWindow::setupMenu()
 {
-    // 将5个侧边栏按钮加入互斥按钮组，id 对应 contentStack 页面索引
+    // 将6个侧边栏按钮加入互斥按钮组，id 对应 contentStack 页面索引
     m_menuGroup->addButton(ui->btnDashboard, 0);
     m_menuGroup->addButton(ui->btnPileStatus, 1);
     m_menuGroup->addButton(ui->btnPileManage, 2);
     m_menuGroup->addButton(ui->btnStationManage, 3);
     m_menuGroup->addButton(ui->btnUserManage, 4);
+    m_menuGroup->addButton(ui->btnOrderManage, 5);
 
     connect(m_menuGroup, &QButtonGroup::idClicked,
             this, &MainWindow::onMenuClicked);
@@ -116,7 +126,7 @@ void MainWindow::onMenuClicked(int id)
     // 记录页面切换日志
     static const QStringList names = {
         tr("销售业绩"), tr("电桩状态"), tr("充电桩管理"),
-        tr("充电站管理"), tr("用户管理")
+        tr("充电站管理"), tr("用户管理"), tr("订单管理")
     };
     appendLog(tr("切换页面：%1").arg(names.value(id, tr("未知"))));
 }

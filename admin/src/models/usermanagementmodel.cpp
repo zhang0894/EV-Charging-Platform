@@ -1,9 +1,10 @@
 #include "usermanagementmodel.h"
+#include "tokenmanager.h"
 
 #include <QDebug>
 #include <QDateTime>
+#include <QUuid>
 
-#include <QNetworkAccessManager>
 #include <QNetworkRequest>
 #include <QNetworkReply>
 #include <QUrl>
@@ -31,7 +32,9 @@ QStandardItemModel *UserManagementModel::getModel()
 
 void UserManagementModel::setAuthToken(const QString &token)
 {
-    m_authToken = token.trimmed();
+    // Token 由 TokenManager 单例统一管理（登录后由 main.cpp 设置），
+    // Model 不再保存 Token；首次拉取由 Widget 触发。
+    Q_UNUSED(token);
 }
 
 // ============================================================================
@@ -46,8 +49,6 @@ void UserManagementModel::fetchUsers(int page, int pageSize,
     m_pageSize = qMax(1, pageSize);
     m_phoneFilter = phoneFilter.trimmed();
     m_statusFilter = statusFilter;
-
-    ensureNetworkManager();
 
     QUrl url(m_serverBase + QStringLiteral("/api/v1/admin/users"));
     QUrlQuery query;
@@ -65,10 +66,8 @@ void UserManagementModel::fetchUsers(int page, int pageSize,
                        << url.toString();
 
     QNetworkRequest request(url);
-    prepareRequest(&request);
-
-    QNetworkReply *reply = m_networkManager->get(request);
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    // prepareRequest 由 TokenManager::get 内部统一处理
+    TokenManager::instance()->get(request, [this](QNetworkReply *reply) {
         handleUsersReply(reply);
     });
 }
@@ -80,46 +79,62 @@ void UserManagementModel::fetchUsers(int page, int pageSize,
 
 void UserManagementModel::setUserStatus(int userId, int newStatus, const QString &reason)
 {
-    ensureNetworkManager();
-
     const QUrl url(m_serverBase
                    + QStringLiteral("/api/v1/admin/users/%1/status").arg(userId));
     QNetworkRequest request(url);
-    prepareRequest(&request);
+    // prepareRequest 由 TokenManager::put 内部统一处理
 
     QJsonObject body;
     body.insert(QStringLiteral("status"), newStatus);
     body.insert(QStringLiteral("reason"), reason);
 
-    QNetworkReply *reply = m_networkManager->put(
-        request, QJsonDocument(body).toJson(QJsonDocument::Compact));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, userId, newStatus]() {
-        handleStatusReply(reply, userId, newStatus);
-    });
+    TokenManager::instance()->put(
+        request, QJsonDocument(body).toJson(QJsonDocument::Compact),
+        [this, userId, newStatus](QNetworkReply *reply) {
+            handleStatusReply(reply, userId, newStatus);
+        });
+}
+
+// ============================================================================
+// 管理员手动调账 / 余额补偿（文档 3.5 节第 3 部分）
+//   POST /api/v1/admin/users/{user_id}/adjust-wallet
+//   请求头: Idempotency-Key（ADJ-<UUID>，文档要求，防重复提交）
+//   请求体: { amount, amount_cents, remark }
+//   金额支持负数（扣减），服务端校验调整后余额不可为负（InsufficientBalance）
+// ============================================================================
+
+void UserManagementModel::adjustUserWallet(int userId, double amount,
+                                           const QString &remark)
+{
+    const QUrl url(m_serverBase
+                   + QStringLiteral("/api/v1/admin/users/%1/adjust-wallet").arg(userId));
+    QNetworkRequest request(url);
+    // 幂等键：每次请求生成唯一 ID，服务端可据此去重（文档要求）
+    // 在调用 TokenManager 前设置，prepareRequest 只补充鉴权头，保留自定义头
+    request.setRawHeader("Idempotency-Key",
+                         (QStringLiteral("ADJ-")
+                          + QUuid::createUuid().toString(QUuid::WithoutBraces))
+                             .toUtf8());
+
+    const qint64 amountCents = qRound64(amount * 100.0);
+    QJsonObject body;
+    body.insert(QStringLiteral("amount"), amount);
+    body.insert(QStringLiteral("amount_cents"), amountCents);
+    body.insert(QStringLiteral("remark"), remark);
+
+    qDebug().noquote() << "[UserManagementModel] adjustUserWallet() -"
+                       << url.toString() << "amount_cents:" << amountCents;
+
+    TokenManager::instance()->post(
+        request, QJsonDocument(body).toJson(QJsonDocument::Compact),
+        [this, userId](QNetworkReply *reply) {
+            handleAdjustReply(reply, userId);
+        });
 }
 
 // ============================================================================
 // 内部辅助
 // ============================================================================
-
-void UserManagementModel::ensureNetworkManager()
-{
-    if (!m_networkManager) {
-        m_networkManager = new QNetworkAccessManager(this);
-    }
-}
-
-void UserManagementModel::prepareRequest(QNetworkRequest *request) const
-{
-    request->setHeader(QNetworkRequest::ContentTypeHeader,
-                       QStringLiteral("application/json"));
-    request->setRawHeader("Accept", "application/json");
-    // 受保护接口需携带 Bearer Token；未设置 Token 时不带头（本地联调用）
-    if (!m_authToken.isEmpty()) {
-        request->setRawHeader("Authorization",
-                              (QStringLiteral("Bearer ") + m_authToken).toUtf8());
-    }
-}
 
 void UserManagementModel::populateUsers(const QJsonArray &users)
 {
@@ -171,6 +186,7 @@ void UserManagementModel::populateUsers(const QJsonArray &users)
         actItem->setData(userId, UserIdRole);
         actItem->setData(status, StatusRole);
         actItem->setData(phone, PhoneRole);
+        actItem->setData(balance, BalanceRole);
         actItem->setTextAlignment(Qt::AlignCenter);
 
         m_tableModel->appendRow({idItem, phoneItem, nickItem,
@@ -266,6 +282,64 @@ void UserManagementModel::handleStatusReply(QNetworkReply *reply,
     const QString msg = QStringLiteral("用户 %1 %2成功").arg(userId).arg(actionText);
     qDebug().noquote() << "[UserManagementModel]" << msg;
     emit operationSuccess(msg);
+}
+
+void UserManagementModel::handleAdjustReply(QNetworkReply *reply, int userId)
+{
+    const QNetworkReply::NetworkError netError = reply->error();
+    const QString netErrorString = reply->errorString();
+    const int httpStatus =
+        reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const QByteArray body = reply->readAll();
+    reply->deleteLater();
+
+    const QString apiTag =
+        QStringLiteral("POST /api/v1/admin/users/%1/adjust-wallet").arg(userId);
+
+    if (netError != QNetworkReply::NoError) {
+        const QString msg = QStringLiteral("%1 网络请求失败 (HTTP %2): %3")
+                                .arg(apiTag).arg(httpStatus).arg(netErrorString);
+        qWarning() << "[UserManagementModel]" << msg;
+        emit errorOccurred(msg);
+        return;
+    }
+    if (httpStatus < 200 || httpStatus >= 300) {
+        const QString msg = QStringLiteral("%1 服务器返回异常状态 HTTP %2")
+                                .arg(apiTag).arg(httpStatus);
+        qWarning().noquote() << "[UserManagementModel]" << msg
+                             << "原始响应:" << QString::fromUtf8(body);
+        emit errorOccurred(msg);
+        return;
+    }
+
+    QJsonObject data;
+    if (!extractData(body, apiTag, data)) {
+        return;
+    }
+    // 与文档不一致时打印原始响应（transaction_id 缺失视为异常）
+    if (!data.contains(QStringLiteral("transaction_id"))) {
+        qWarning().noquote()
+            << "[UserManagementModel]" << apiTag
+            << "响应缺少 transaction_id 字段, 原始响应:" << QString::fromUtf8(body);
+    }
+
+    const double adjustAmount = data.value(QStringLiteral("adjust_amount")).toDouble();
+    const double balanceBefore = data.value(QStringLiteral("balance_before")).toDouble();
+    const double balanceAfter = data.value(QStringLiteral("balance_after")).toDouble();
+    const QString txId = data.value(QStringLiteral("transaction_id")).toString();
+
+    const QString actionText = adjustAmount >= 0 ? tr("充值补偿") : tr("扣减");
+    const QString msg = QStringLiteral(
+        "用户 %1 钱包%2成功\n流水号：%3\n调整金额：%4 元\n"
+        "调整前余额：%5 元 -> 调整后余额：%6 元")
+        .arg(QString::number(userId), actionText, txId.isEmpty() ? QStringLiteral("-") : txId,
+             QString::number(adjustAmount, 'f', 2),
+             QString::number(balanceBefore, 'f', 2),
+             QString::number(balanceAfter, 'f', 2));
+    qDebug().noquote() << "[UserManagementModel] 调账成功 - 用户" << userId
+                       << "adjust:" << adjustAmount
+                       << "balance:" << balanceBefore << "->" << balanceAfter;
+    emit adjustSuccess(msg);
 }
 
 bool UserManagementModel::extractData(const QByteArray &body,

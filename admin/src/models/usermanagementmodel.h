@@ -7,7 +7,6 @@
 #include <QJsonArray>
 
 QT_BEGIN_NAMESPACE
-class QNetworkAccessManager;
 class QNetworkReply;
 class QNetworkRequest;
 class QJsonObject;
@@ -19,11 +18,15 @@ QT_END_NAMESPACE
  * 继承自 QObject，内部持有一个 QStandardItemModel 作为表格数据源
  * （每行一个用户），通过 getModel() 提供给 Widget 绑定 QTableView。
  *
- * 接口对应《端口设计文档》3.5 节：
+ * 接口对应《API 设计文档》3.5 节：
  *   - GET /api/v1/admin/users                       分页查询用户列表
  *       查询参数: page / page_size / phone(可选) / status(可选, 1=正常 2=冻结)
  *   - PUT /api/v1/admin/users/{user_id}/status      冻结/解冻用户
  *       Body: { "status": 2, "reason": "..." }
+ *   - POST /api/v1/admin/users/{user_id}/adjust-wallet  管理员手动调账/余额补偿
+ *       请求头: Idempotency-Key（ADJ-<UUID>，防重复提交）
+ *       Body: { "amount": 20.00, "amount_cents": 2000, "remark": "..." }
+ *       金额支持负数（扣减），服务端校验调整后余额不可为负。
  *
  * 统一响应信封：{ code, msg, data, timestamp }，code==0 表示成功。
  * 响应解析失败 / 网络错误时通过 errorOccurred() 信号通知界面，
@@ -54,7 +57,8 @@ public:
     enum DataRole {
         UserIdRole = Qt::UserRole + 1,   // 用户 ID（int）
         StatusRole   = Qt::UserRole + 2, // 用户状态（int, 1=正常 2=冻结）
-        PhoneRole    = Qt::UserRole + 3  // 手机号（QString）
+        PhoneRole    = Qt::UserRole + 3, // 手机号（QString）
+        BalanceRole  = Qt::UserRole + 4  // 当前余额（double，元）
     };
 
     explicit UserManagementModel(QObject *parent = nullptr);
@@ -87,6 +91,19 @@ public:
      */
     void setUserStatus(int userId, int newStatus, const QString &reason);
 
+    /**
+     * @brief 管理员手动调账 / 余额补偿（文档 3.5 节第 3 部分）
+     * @param userId 目标用户 ID
+     * @param amount 调整金额（元，正数=充值补偿，负数=扣减，不可为 0）
+     * @param remark 调账备注/原因（记录到后台审计流水）
+     *
+     * POST /api/v1/admin/users/{user_id}/adjust-wallet
+     * 请求头: Idempotency-Key（ADJ-<UUID>，防止网络重试导致重复调账）
+     * 请求体: { amount, amount_cents, remark }（两者一致，服务端优先用 cents）
+     * 成功后发射 adjustSuccess(msg)，msg 含流水号与调整前后余额。
+     */
+    void adjustUserWallet(int userId, double amount, const QString &remark);
+
 signals:
     /** 用户列表已就绪并填充进 Model，Widget 据此更新分页栏与操作按钮 */
     void usersReady(const QJsonArray &users, int total, int page, int pageSize);
@@ -94,16 +111,13 @@ signals:
     /** 冻结/解冻操作成功（msg 为可展示的提示信息） */
     void operationSuccess(const QString &msg);
 
+    /** 调账成功（msg 含流水号、调整前后余额，可直接展示） */
+    void adjustSuccess(const QString &msg);
+
     /** 网络请求失败 / 响应解析失败 / 业务错误码非 0 */
     void errorOccurred(const QString &errorMsg);
 
 private:
-    /** 懒初始化 QNetworkAccessManager（以 this 为 parent，随 Model 释放） */
-    void ensureNetworkManager();
-
-    /** 为请求填充公共头（Content-Type / Accept / Authorization） */
-    void prepareRequest(QNetworkRequest *request) const;
-
     /** 将用户数组填充进表格 Model（清空旧行后逐行追加） */
     void populateUsers(const QJsonArray &users);
 
@@ -113,6 +127,9 @@ private:
     /** 处理冻结/解冻响应：校验 -> 发 operationSuccess */
     void handleStatusReply(QNetworkReply *reply, int userId, int newStatus);
 
+    /** 处理调账响应：校验 -> 发 adjustSuccess（含流水号与前后余额） */
+    void handleAdjustReply(QNetworkReply *reply, int userId);
+
     /**
      * @brief 解析统一响应信封 {code,msg,data}
      * @return true 表示 code==0 且 data 已取出；false 表示失败（已 emit errorOccurred）
@@ -121,8 +138,6 @@ private:
     bool extractData(const QByteArray &body, const QString &apiTag, QJsonObject &outData);
 
     QStandardItemModel *m_tableModel = nullptr; // 表格数据源
-    QNetworkAccessManager *m_networkManager = nullptr; // HTTP 请求管理器（懒创建）
-    QString m_authToken;                        // 管理员 Bearer Token
 
     // 服务器地址：当前写死，后续再改为可配置
     const QString m_serverBase = QStringLiteral("http://62.234.84.145:8080");

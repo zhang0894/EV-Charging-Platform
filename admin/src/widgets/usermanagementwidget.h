@@ -15,17 +15,19 @@ class UserManagementModel;
 /**
  * @brief 用户管理页（PC 运营后台）
  *
- * 职责：用户列表展示 + 手机号搜索 + 状态筛选 + 冻结/解冻操作。
+ * 职责：用户列表展示 + 手机号搜索 + 状态筛选 + 冻结/解冻 + 手动调账/余额补偿。
  * 数据全部来自 UserManagementModel（唯一数据入口），UI 不硬编码业务数据。
  *
  * 布局：
  *   - 顶部工具栏：手机号搜索框 / 状态筛选下拉框 / 查询 / 刷新
  *   - 中间表格：  QTableView 绑定 Model 的 QStandardItemModel，
- *                 每行最后一列动态安装"冻结"或"解冻"按钮
+ *                 每行最后一列动态安装"调账"+"冻结/解冻"按钮
  *   - 底部分页栏：上一页 / 页码信息 / 下一页
  *
  * 交互逻辑：
- *   - 点击操作按钮 -> 确认对话框 -> setUserStatus() -> 成功后刷新当前页；
+ *   - 点击冻结/解冻按钮 -> 确认对话框 -> setUserStatus() -> 成功后刷新当前页；
+ *   - 点击调账按钮 -> 金额/备注弹窗 -> 二次确认 -> adjustUserWallet() ->
+ *     成功后提示流水号与前后余额并刷新当前页；
  *   - 搜索 / 状态筛选变化 -> 重置为第 1 页重新查询；
  *   - 上一页/下一页 -> 以新页码重新调用 fetchUsers()。
  */
@@ -49,14 +51,16 @@ private slots:
     void onStatusFilterChanged(int index); // 状态筛选变化 -> 重置第 1 页
     void onUsersReady(const QJsonArray &users, int total, int page, int pageSize);
     void onOperationSuccess(const QString &msg);
+    void onAdjustSuccess(const QString &msg);   // 调账成功：提示明细并刷新当前页
     void onErrorOccurred(const QString &errorMsg);
 
 private:
     void buildUi();                   // 构建界面骨架与样式（无 .ui 文件，纯代码布局）
     void applyFiltersAndFetch(int page); // 以当前筛选条件请求指定页
-    void installActionButtons();      // 依据每行状态安装"冻结"/"解冻"按钮
+    void installActionButtons();      // 依据每行状态安装"调账"+"冻结/解冻"按钮
     void updatePager(int total, int page, int pageSize); // 刷新分页栏
     void confirmAndSetStatus(int userId, const QString &phone, int targetStatus);
+    void showAdjustDialog(int userId, const QString &phone, double balance); // 调账弹窗
 
     UserManagementModel *m_model;     // 数据源（唯一数据入口）
 

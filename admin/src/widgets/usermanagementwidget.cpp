@@ -3,6 +3,7 @@
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QFormLayout>
 #include <QFrame>
 #include <QLineEdit>
 #include <QComboBox>
@@ -11,8 +12,16 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QMessageBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDoubleValidator>
 
-// 表格内操作按钮样式（冻结=红 / 解冻=绿），与轻量专业风主题一致
+// 表格内操作按钮样式（调账=蓝 / 冻结=红 / 解冻=绿），与轻量专业风主题一致
+static const QString kAdjustBtnStyle = QStringLiteral(
+    "QPushButton{background-color:#e8f0fe;color:#1a5cff;"
+    "border:1px solid #d6e2ff;border-radius:4px;padding:3px 12px;min-width:48px;}"
+    "QPushButton:hover{background-color:#d6e2ff;color:#1546b8;border-color:#b8ccff;}");
+
 static const QString kFreezeBtnStyle = QStringLiteral(
     "QPushButton{background-color:#fdecec;color:#dc2626;"
     "border:1px solid #f6c8c8;border-radius:4px;padding:3px 14px;min-width:52px;}"
@@ -34,6 +43,8 @@ UserManagementWidget::UserManagementWidget(QWidget *parent)
             this, &UserManagementWidget::onUsersReady);
     connect(m_model, &UserManagementModel::operationSuccess,
             this, &UserManagementWidget::onOperationSuccess);
+    connect(m_model, &UserManagementModel::adjustSuccess,
+            this, &UserManagementWidget::onAdjustSuccess);
     connect(m_model, &UserManagementModel::errorOccurred,
             this, &UserManagementWidget::onErrorOccurred);
 
@@ -142,10 +153,10 @@ void UserManagementWidget::buildUi()
     m_tableView->verticalHeader()->setDefaultSectionSize(44);
     m_tableView->horizontalHeader()->setHighlightSections(false);
     m_tableView->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    // 操作列固定宽度，其余列均分拉伸
+    // 操作列固定宽度（调账 + 冻结/解冻两个按钮并排），其余列均分拉伸
     m_tableView->horizontalHeader()->setSectionResizeMode(
         UserManagementModel::ActionCol, QHeaderView::Fixed);
-    m_tableView->setColumnWidth(UserManagementModel::ActionCol, 120);
+    m_tableView->setColumnWidth(UserManagementModel::ActionCol, 180);
     rootLayout->addWidget(m_tableView, 1);
 
     // ---------------- 底部分页栏 ----------------
@@ -182,7 +193,7 @@ void UserManagementWidget::applyFiltersAndFetch(int page)
     m_model->fetchUsers(page, m_pageSize, phone, statusFilter);
 }
 
-// ------------- 每行最后一列安装"冻结"/"解冻"按钮 -------------
+// ------------- 每行最后一列安装"调账"+"冻结/解冻"按钮 -------------
 void UserManagementWidget::installActionButtons()
 {
     QStandardItemModel *tm = m_model->getModel();
@@ -191,20 +202,40 @@ void UserManagementWidget::installActionButtons()
         const int userId = idx.data(UserManagementModel::UserIdRole).toInt();
         const int status = idx.data(UserManagementModel::StatusRole).toInt();
         const QString phone = idx.data(UserManagementModel::PhoneRole).toString();
+        const double balance = idx.data(UserManagementModel::BalanceRole).toDouble();
 
         const bool frozen = (status == 2);
         const int targetStatus = frozen ? 1 : 2; // 状态取反：冻结 <-> 正常
 
-        QPushButton *btn = new QPushButton(frozen ? tr("解冻") : tr("冻结"), m_tableView);
-        btn->setCursor(Qt::PointingHandCursor);
-        btn->setStyleSheet(frozen ? kUnfreezeBtnStyle : kFreezeBtnStyle);
-        // 按值捕获目标操作，避免行号随刷新变化带来的错位
-        connect(btn, &QPushButton::clicked, this,
+        // 容器：调账按钮（每行都有）+ 冻结/解冻按钮
+        auto *panel = new QWidget(m_tableView);
+        auto *lay = new QHBoxLayout(panel);
+        lay->setContentsMargins(2, 2, 2, 2);
+        lay->setSpacing(4);
+
+        auto *btnAdjust = new QPushButton(tr("调账"), panel);
+        btnAdjust->setCursor(Qt::PointingHandCursor);
+        btnAdjust->setStyleSheet(kAdjustBtnStyle);
+        // 按值捕获目标用户与当前余额，避免行号随刷新变化带来的错位
+        connect(btnAdjust, &QPushButton::clicked, this,
+                [this, userId, phone, balance]() {
+                    showAdjustDialog(userId, phone, balance);
+                });
+        lay->addWidget(btnAdjust);
+
+        QPushButton *btnStatus = new QPushButton(frozen ? tr("解冻") : tr("冻结"), panel);
+        btnStatus->setCursor(Qt::PointingHandCursor);
+        btnStatus->setStyleSheet(frozen ? kUnfreezeBtnStyle : kFreezeBtnStyle);
+        connect(btnStatus, &QPushButton::clicked, this,
                 [this, userId, phone, targetStatus]() {
                     confirmAndSetStatus(userId, phone, targetStatus);
                 });
+        lay->addWidget(btnStatus);
+
+        lay->addStretch(1);
+        panel->setLayout(lay);
         // 模型行被移除/重建时，视图会自动删除旧按钮，无需手动管理
-        m_tableView->setIndexWidget(idx, btn);
+        m_tableView->setIndexWidget(idx, panel);
     }
 }
 
@@ -251,6 +282,14 @@ void UserManagementWidget::onOperationSuccess(const QString &msg)
 {
     QMessageBox::information(this, tr("操作成功"), msg);
     // 成功后刷新当前页，保证状态列与操作按钮同步
+    applyFiltersAndFetch(m_page);
+}
+
+// ------------- Model 回调：调账成功 -------------
+void UserManagementWidget::onAdjustSuccess(const QString &msg)
+{
+    QMessageBox::information(this, tr("调账成功"), msg);
+    // 成功后刷新当前页，余额列同步更新
     applyFiltersAndFetch(m_page);
 }
 
@@ -314,4 +353,89 @@ void UserManagementWidget::confirmAndSetStatus(int userId, const QString &phone,
     }
 
     m_model->setUserStatus(userId, targetStatus, reason);
+}
+
+// ------------- 手动调账 / 余额补偿弹窗（文档 3.5.3） -------------
+void UserManagementWidget::showAdjustDialog(int userId, const QString &phone,
+                                            double balance)
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("手动调账 / 余额补偿"));
+    dialog.setMinimumWidth(380);
+
+    auto *form = new QFormLayout(&dialog);
+    form->setSpacing(10);
+    form->setContentsMargins(18, 16, 18, 12);
+
+    // 用户信息行（只读参考）
+    auto *infoLabel = new QLabel(
+        QStringLiteral("用户：%1（ID: %2）\n当前余额：%3 元")
+            .arg(phone.isEmpty() ? QStringLiteral("-") : phone,
+                 QString::number(userId), QString::number(balance, 'f', 2)),
+        &dialog);
+    infoLabel->setStyleSheet(QStringLiteral("color:#4a5a6e;"));
+    form->addRow(infoLabel);
+
+    // 调整金额：支持负数（扣减），最多两位小数
+    auto *amountEdit = new QLineEdit(&dialog);
+    amountEdit->setPlaceholderText(tr("正数=充值补偿，负数=扣减，不可为 0"));
+    auto *amountValidator = new QDoubleValidator(-1000000.0, 1000000.0, 2, amountEdit);
+    amountValidator->setNotation(QDoubleValidator::StandardNotation);
+    amountEdit->setValidator(amountValidator);
+    form->addRow(tr("调整金额(元):"), amountEdit);
+
+    // 调账备注（审计流水必填）
+    auto *remarkEdit = new QLineEdit(&dialog);
+    remarkEdit->setPlaceholderText(tr("请输入调账原因，将记入审计流水"));
+    remarkEdit->setMaxLength(100);
+    form->addRow(tr("调账备注:"), remarkEdit);
+
+    auto *btnBox = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    btnBox->button(QDialogButtonBox::Ok)->setText(tr("确认调账"));
+    btnBox->button(QDialogButtonBox::Cancel)->setText(tr("取消"));
+    connect(btnBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(btnBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    form->addRow(btnBox);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    // 校验：金额合法且非 0
+    const QString amountText = amountEdit->text().trimmed();
+    const double amount = amountText.toDouble();
+    if (amountText.isEmpty() || amount == 0.0) {
+        QMessageBox::warning(this, tr("输入有误"), tr("调整金额不能为 0，请重新输入"));
+        return;
+    }
+    // 校验：备注必填（写入审计流水）
+    const QString remark = remarkEdit->text().trimmed();
+    if (remark.isEmpty()) {
+        QMessageBox::warning(this, tr("输入有误"), tr("请填写调账备注"));
+        return;
+    }
+    // 前置余额校验：扣减后不可为负（服务端同样校验，此处提前拦截）
+    if (amount < 0 && balance + amount < 0) {
+        QMessageBox::warning(this, tr("输入有误"),
+                             tr("扣减后余额将为负数（当前余额 %1 元），操作被拒绝")
+                                 .arg(QString::number(balance, 'f', 2)));
+        return;
+    }
+
+    // 二次确认（敏感资金操作）
+    const QString actionText = amount > 0 ? tr("充值补偿") : tr("扣减");
+    const QMessageBox::StandardButton ret = QMessageBox::question(
+        this, tr("确认调账"),
+        QStringLiteral("确认对用户 %1（ID: %2）执行%3 %4 元？\n调账备注：%5\n\n"
+                       "该操作将立即生效并记入资金流水，请谨慎确认。")
+            .arg(phone.isEmpty() ? QStringLiteral("-") : phone,
+                 QString::number(userId), actionText,
+                 QString::number(amount, 'f', 2), remark),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (ret != QMessageBox::Yes) {
+        return;
+    }
+
+    m_model->adjustUserWallet(userId, amount, remark);
 }
