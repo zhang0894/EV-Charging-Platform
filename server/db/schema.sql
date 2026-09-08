@@ -152,3 +152,12 @@ CREATE TABLE IF NOT EXISTS pile_reservations (
 CREATE INDEX IF NOT EXISTS idx_res_user ON pile_reservations(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_res_pile ON pile_reservations(pile_id, status);
 
+CREATE INDEX IF NOT EXISTS idx_orders_st_sales ON charging_orders(station_id, created_at, order_status);
+CREATE INDEX IF NOT EXISTS idx_orders_status_created_total ON charging_orders(order_status, created_at DESC);
+
+-- 8. 平台全盘指标与历史基底表
+CREATE TABLE IF NOT EXISTS platform_metrics (
+    metric_key VARCHAR(64) PRIMARY KEY,
+    metric_val BIGINT NOT NULL DEFAULT 0,
+    updated_at BIGINT NOT NULL
+);

@@ -123,7 +123,7 @@ public:
             std::unique_lock<std::shared_mutex> lock(mutex_);
             cache_.clear();
         }
-        DbRepository::instance().clear_user_avatars();
+        (void)DbRepository::instance().clear_user_avatars();
     }
 
     void invalidate(int64_t user_id) {

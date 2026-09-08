@@ -58,7 +58,7 @@ public:
     ) {
         StartChargingRequest start_req;
         if (!req.body().empty()) {
-            glz::read<glz::opts{.error_on_unknown_keys = false}>(start_req, req.body());
+            (void)glz::read<glz::opts{.error_on_unknown_keys = false}>(start_req, req.body());
         }
         if (start_req.pile_id.empty()) {
             if (!start_req.pileId.empty()) start_req.pile_id = start_req.pileId;
@@ -413,7 +413,7 @@ public:
     ) {
         ReservePileRequest reserve_req;
         if (!req.body().empty()) {
-            glz::read<glz::opts{.error_on_unknown_keys = false}>(reserve_req, req.body());
+            (void)glz::read<glz::opts{.error_on_unknown_keys = false}>(reserve_req, req.body());
         }
         if (reserve_req.pile_id.empty()) {
             if (!reserve_req.pileId.empty()) reserve_req.pile_id = reserve_req.pileId;
@@ -517,7 +517,7 @@ public:
     ) {
         CancelReservationRequest cancel_req;
         if (!req.body().empty()) {
-            glz::read<glz::opts{.error_on_unknown_keys = false}>(cancel_req, req.body());
+            (void)glz::read<glz::opts{.error_on_unknown_keys = false}>(cancel_req, req.body());
         }
         if (cancel_req.reservation_id.empty()) {
             if (!cancel_req.reservationId.empty()) cancel_req.reservation_id = cancel_req.reservationId;

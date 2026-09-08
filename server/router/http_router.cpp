@@ -358,8 +358,8 @@ http::response<http::string_body> HttpRouter::dispatch(const http::request<http:
         }
 
 
-        // 单站销售统计: /api/v1/admin/stations/{station_id}/sales-stats
-        static const std::regex station_sales_regex(R"(^/api/v1/admin/stations/(\d+)/sales-stats$)");
+        // 单站销售统计: /api/v1/admin/stations/{station_id}/sales (兼容别名 /sales-stats)
+        static const std::regex station_sales_regex(R"(^/api/v1/admin/stations/(\d+)/(?:sales|sales-stats)$)");
         if (method == http::verb::get && std::regex_match(path_str.c_str(), match, station_sales_regex)) {
             int64_t sid = std::stoll(match[1].str());
             std::string time_range = query.contains("time_range") ? query["time_range"] : "today";

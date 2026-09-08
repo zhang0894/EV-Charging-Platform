@@ -98,34 +98,6 @@ struct JsonPile {
     int64_t updated_at{};
 };
 
-struct JsonOrder {
-    std::string order_id{};
-    int64_t user_id{};
-    int32_t station_id{};
-    std::string pile_id{};
-    std::string strategy_type{};
-    double strategy_value{};
-    std::string order_status{};
-    int64_t start_time{};
-    int64_t end_time{};
-    int32_t start_soc{};
-    int32_t end_soc{};
-    double charged_energy_kwh{};
-    double electricity_price{};
-    int64_t electricity_fee_cents{};
-    double service_price{};
-    int64_t service_fee_cents{};
-    int32_t overtime_grace_minutes{};
-    int32_t overtime_duration_minutes{};
-    double overtime_rate_per_15min{};
-    int64_t overtime_fee_cents{};
-    int64_t total_fee_cents{};
-    std::string stop_reason{};
-    int64_t settled_at{};
-    int64_t created_at{};
-    int64_t updated_at{};
-};
-
 } // namespace seed_internal
 
 using namespace seed_internal;
@@ -138,7 +110,7 @@ bool SeedDataGenerator::clear_database() {
     }
     std::cout << "[Seed] Truncating all business tables and resetting sequences...\n";
     PgResultGuard res(conn->exec(
-        "TRUNCATE TABLE pile_reservations, user_avatars, charging_orders, wallet_transaction_flows, piles, user_wallets, stations, users "
+        "TRUNCATE TABLE platform_metrics, pile_reservations, user_avatars, charging_orders, wallet_transaction_flows, piles, user_wallets, stations, users "
         "RESTART IDENTITY CASCADE;"
     ));
     if (!res.is_ok()) {
@@ -186,14 +158,14 @@ bool SeedDataGenerator::import_from_json(const std::string& data_dir) {
         }
         sql += " ON CONFLICT (station_id) DO NOTHING;";
 
-        DbPool::instance().with_transaction([&](DbConnection& tx_conn) -> Result<void> {
+        (void)DbPool::instance().with_transaction([&](DbConnection& tx_conn) -> Result<void> {
             tx_conn.exec(sql.c_str());
             return {};
         });
     }
 
     // 修复自增序列
-    DbPool::instance().with_transaction([&](DbConnection& tx_conn) -> Result<void> {
+    (void)DbPool::instance().with_transaction([&](DbConnection& tx_conn) -> Result<void> {
         tx_conn.exec("SELECT setval('stations_station_id_seq', (SELECT COALESCE(MAX(station_id), 1) FROM stations));");
         return {};
     });
@@ -240,7 +212,7 @@ bool SeedDataGenerator::import_from_json(const std::string& data_dir) {
         u_sql += " ON CONFLICT (user_id) DO NOTHING;";
         w_sql += " ON CONFLICT (user_id) DO NOTHING;";
 
-        DbPool::instance().with_transaction([&](DbConnection& tx_conn) -> Result<void> {
+        (void)DbPool::instance().with_transaction([&](DbConnection& tx_conn) -> Result<void> {
             tx_conn.exec(u_sql.c_str());
             tx_conn.exec(w_sql.c_str());
             return {};
@@ -248,7 +220,7 @@ bool SeedDataGenerator::import_from_json(const std::string& data_dir) {
     }
 
     // 修复自增序列
-    DbPool::instance().with_transaction([&](DbConnection& tx_conn) -> Result<void> {
+    (void)DbPool::instance().with_transaction([&](DbConnection& tx_conn) -> Result<void> {
         tx_conn.exec("SELECT setval('users_user_id_seq', (SELECT COALESCE(MAX(user_id), 1) FROM users));");
         return {};
     });
@@ -289,63 +261,148 @@ bool SeedDataGenerator::import_from_json(const std::string& data_dir) {
         }
         p_sql += " ON CONFLICT (pile_id) DO NOTHING;";
 
-        DbPool::instance().with_transaction([&](DbConnection& tx_conn) -> Result<void> {
+        (void)DbPool::instance().with_transaction([&](DbConnection& tx_conn) -> Result<void> {
             tx_conn.exec(p_sql.c_str());
             return {};
         });
     }
     std::cout << "  [OK] Successfully imported " << piles.size() << " piles.\n";
 
-    // 4. 读取并导入历史订单 (charging_orders)
-    std::string ord_path = resolve_data_path(data_dir, "seed_orders.json");
-    std::cout << "  -> Loading orders from: " << ord_path << "\n";
-    std::string ord_buf = read_file_content(ord_path);
-    if (ord_buf.empty()) {
-        std::cerr << "[Seed Error] Could not read orders JSON file: " << ord_path << "\n";
-        return false;
-    }
+    // 4. 纯 C++ 动态生成过去 30 天的真实充电订单 (不再依赖 seed_orders.json，自动关联真实电站与电桩)
+    std::cout << "  -> Dynamically generating 30-day historical orders using C++ generator...\n";
+    int64_t cst_offset = 8 * 3600 * 1000LL;
+    int64_t current_day = (now + cst_offset) / 86400000LL;
 
-    std::vector<JsonOrder> orders;
-    auto ec_ord = glz::read_json(orders, ord_buf);
-    if (ec_ord) {
-        std::cerr << "[Seed Error] Glaze failed to parse orders JSON: "
-                  << glz::format_error(ec_ord, ord_buf) << "\n";
-        return false;
+    std::unordered_map<int32_t, std::vector<const JsonPile*>> station_piles_map;
+    station_piles_map.reserve(stations.size());
+    for (const auto& p : piles) {
+        station_piles_map[p.station_id].push_back(&p);
     }
-    std::cout << "     Parsed " << orders.size() << " orders. Bulk inserting...\n";
 
     constexpr int ORDER_BATCH = 2000;
-    for (size_t i = 0; i < orders.size(); i += ORDER_BATCH) {
-        size_t end_idx = std::min(i + ORDER_BATCH, orders.size());
-        std::string o_sql = "INSERT INTO charging_orders (order_id, user_id, station_id, pile_id, strategy_type, strategy_value, order_status, start_time, end_time, start_soc, end_soc, charged_energy_kwh, electricity_price, electricity_fee_cents, service_price, service_fee_cents, overtime_grace_minutes, overtime_duration_minutes, overtime_rate_per_15min, overtime_fee_cents, total_fee_cents, stop_reason, settled_at, created_at, updated_at) VALUES ";
+    std::string o_sql;
+    o_sql.reserve(1024 * 512);
+    int batch_count = 0;
+    size_t total_generated_orders = 0;
 
-        for (size_t j = i; j < end_idx; ++j) {
-            const auto& o = orders[j];
-            if (j > i) o_sql += ", ";
-            o_sql += std::format("('{}', {}, {}, '{}', '{}', {:.1f}, '{}', {}, {}, {}, {}, {:.2f}, {:.2f}, {}, {:.2f}, {}, {}, {}, {:.2f}, {}, {}, '{}', {}, {}, {})",
-                                 sql_escape(o.order_id), o.user_id, o.station_id, sql_escape(o.pile_id),
-                                 sql_escape(o.strategy_type), o.strategy_value, sql_escape(o.order_status),
-                                 o.start_time, o.end_time, o.start_soc, o.end_soc, o.charged_energy_kwh,
-                                 o.electricity_price, o.electricity_fee_cents, o.service_price,
-                                 o.service_fee_cents, o.overtime_grace_minutes, o.overtime_duration_minutes,
-                                 o.overtime_rate_per_15min, o.overtime_fee_cents, o.total_fee_cents,
-                                 sql_escape(o.stop_reason), o.settled_at, o.created_at, o.updated_at);
-        }
+    auto flush_batch = [&]() {
+        if (batch_count == 0) return;
         o_sql += " ON CONFLICT (order_id) DO NOTHING;";
-
-        DbPool::instance().with_transaction([&](DbConnection& tx_conn) -> Result<void> {
+        (void)DbPool::instance().with_transaction([&](DbConnection& tx_conn) -> Result<void> {
             tx_conn.exec(o_sql.c_str());
             return {};
         });
+        o_sql.clear();
+        batch_count = 0;
+    };
+
+    for (int d = 29; d >= 0; --d) {
+        int64_t day_idx = current_day - d;
+        int64_t day_start_ms = day_idx * 86400000LL - cst_offset;
+
+        for (const auto& s : stations) {
+            if (!s.is_online) continue; // 下线/暂停营业电站不生成订单
+
+            auto it = station_piles_map.find(s.station_id);
+            if (it == station_piles_map.end() || it->second.empty()) continue;
+            const auto& p_list = it->second;
+
+            double elec_price = 1.15 + static_cast<double>((static_cast<uint64_t>(s.station_id) * 104729ULL + 12345ULL) % 71) * 0.01;
+            double serv_price = 0.35;
+
+            uint64_t seed = (static_cast<uint64_t>(s.station_id) * 314159ULL) ^ (static_cast<uint64_t>(day_idx) * 271828ULL);
+            int station_tier = static_cast<int>((static_cast<uint64_t>(s.station_id) * 1337ULL) % 100);
+            int orders_today = 0;
+            if (station_tier < 15) {
+                // 繁忙站点: 每日 1 ~ 4 单
+                orders_today = 1 + static_cast<int>(seed % 4);
+            } else if (station_tier < 70) {
+                // 普通站点: 每日 0 ~ 2 单
+                orders_today = (seed % 3 == 0) ? 0 : (1 + static_cast<int>(seed % 2));
+            } else {
+                // 较冷门站点: 隔日 0 ~ 1 单
+                orders_today = (seed % 2 == 0) ? 0 : 1;
+            }
+
+            for (int k = 0; k < orders_today; ++k) {
+                uint64_t ord_seed = seed ^ (static_cast<uint64_t>(k) * 65537ULL);
+                const auto* selected_pile = p_list[ord_seed % p_list.size()];
+                bool is_fast = (selected_pile->type == "FAST");
+
+                int hour = (ord_seed % 100 < 75) ? (8 + static_cast<int>(ord_seed % 14)) : static_cast<int>(ord_seed % 24);
+                int minute = static_cast<int>((ord_seed / 24) % 60);
+                int second = static_cast<int>((ord_seed / 1440) % 60);
+                int64_t start_time = day_start_ms + (hour * 3600LL + minute * 60LL + second) * 1000LL;
+                if (start_time > now) start_time = now - 1800000LL;
+
+                int dur_mins = is_fast ? (30 + static_cast<int>(ord_seed % 45)) : (120 + static_cast<int>(ord_seed % 240));
+                int64_t end_time = start_time + dur_mins * 60 * 1000LL;
+                if (end_time > now) end_time = now;
+
+                int start_soc = 15 + static_cast<int>(ord_seed % 25);
+                int end_soc = 85 + static_cast<int>(ord_seed % 15);
+                if (end_soc > 100) end_soc = 100;
+
+                double battery_cap = 50.0 + static_cast<double>(ord_seed % 35);
+                double charged_energy = std::round(battery_cap * (end_soc - start_soc) / 100.0 * 100.0) / 100.0;
+                int64_t elec_cents = static_cast<int64_t>(charged_energy * elec_price * 100.0);
+                int64_t serv_cents = static_cast<int64_t>(charged_energy * serv_price * 100.0);
+                int overtime_mins = (ord_seed % 100 < 12) ? (15 + static_cast<int>(ord_seed % 4) * 15) : 0;
+                int64_t overtime_cents = (overtime_mins / 15) * 500LL;
+                int64_t total_cents = elec_cents + serv_cents + overtime_cents;
+
+                int64_t uid = 1 + static_cast<int64_t>(ord_seed % (users.empty() ? 20000 : users.size()));
+                std::string st_status = (ord_seed % 100 < 97) ? "COMPLETED" : "UNSETTLED";
+                std::string ord_id = std::format("ORD_{}_{:05d}_{:02d}", start_time, s.station_id, k);
+                std::string stop_rsn = (ord_seed % 2 == 0) ? "USER_MANUAL_STOP" : "TARGET_SOC_REACHED";
+                int64_t settled_at = (st_status == "COMPLETED") ? end_time : 0;
+
+                if (batch_count == 0) {
+                    o_sql = "INSERT INTO charging_orders (order_id, user_id, station_id, pile_id, strategy_type, strategy_value, order_status, start_time, end_time, start_soc, end_soc, charged_energy_kwh, electricity_price, electricity_fee_cents, service_price, service_fee_cents, overtime_grace_minutes, overtime_duration_minutes, overtime_rate_per_15min, overtime_fee_cents, total_fee_cents, stop_reason, settled_at, created_at, updated_at) VALUES ";
+                } else {
+                    o_sql += ", ";
+                }
+
+                o_sql += std::format("('{}', {}, {}, '{}', 'FULL', 0.0, '{}', {}, {}, {}, {}, {:.2f}, {:.2f}, {}, {:.2f}, {}, 15, {}, 5.00, {}, {}, '{}', {}, {}, {})",
+                                     sql_escape(ord_id), uid, s.station_id, sql_escape(selected_pile->pile_id),
+                                     st_status, start_time, end_time, start_soc, end_soc, charged_energy,
+                                     elec_price, elec_cents, serv_price, serv_cents,
+                                     overtime_mins, overtime_cents, total_cents,
+                                     stop_rsn, settled_at, start_time, end_time);
+
+                batch_count++;
+                total_generated_orders++;
+
+                if (batch_count >= ORDER_BATCH) {
+                    flush_batch();
+                }
+            }
+        }
     }
-    std::cout << "  [OK] Successfully imported " << orders.size() << " orders.\n";
+    flush_batch();
+    std::cout << "  [OK] Successfully generated and imported " << total_generated_orders << " orders for the last 30 days.\n";
+
+    // 5. 初始化全盘指标平台基底 (让全盘统计数值远大于当月数据，且记录最后模拟日)
+    int64_t hist_baseline_cents = 8865000000LL; // 8865 万元历史营收基底
+    (void)DbPool::instance().with_transaction([&](DbConnection& tx_conn) -> Result<void> {
+        tx_conn.exec(std::format(
+            "INSERT INTO platform_metrics (metric_key, metric_val, updated_at) VALUES "
+            "('historical_revenue_cents', {}, {}), "
+            "('last_simulated_day', {}, {}) "
+            "ON CONFLICT (metric_key) DO UPDATE SET metric_val = EXCLUDED.metric_val, updated_at = EXCLUDED.updated_at;",
+            hist_baseline_cents, now, current_day, now
+        ).c_str());
+        return {};
+    });
+    std::cout << "  [OK] Successfully initialized platform metrics baseline (historical revenue: "
+              << (hist_baseline_cents / 100.0) << " yuan, last_simulated_day: " << current_day << ").\n";
 
     auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t_start).count();
     std::cout << "[Seed] >>> Successfully finished importing dataset in " << elapsed_ms << " ms!\n"
               << "       - Stations: " << stations.size() << "\n"
               << "       - Users:    " << users.size() << "\n"
               << "       - Piles:    " << piles.size() << "\n"
-              << "       - Orders:   " << orders.size() << "\n";
+              << "       - Orders:   " << total_generated_orders << "\n";
 
     return true;
 }

@@ -91,6 +91,13 @@ void ChargingSimulator::step_once(double delta_seconds) {
         ChargingStatePool::instance().maintain_simulation(now);
     }
 
+    // 2.1 定期检查跨天自动模拟生成新一天的订单 (每10秒一次)
+    static int64_t last_day_check_time = 0;
+    if (now - last_day_check_time >= 10000) {
+        last_day_check_time = now;
+        DbRepository::instance().check_and_simulate_daily_orders();
+    }
+
     // 3. 推进活跃充电桩推演
     auto active_piles = ChargingStatePool::instance().get_all_active_charging_piles();
 

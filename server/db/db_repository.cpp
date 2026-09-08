@@ -3,12 +3,26 @@
 #include "../cache/redis_cache.hpp"
 #include "../memory/station_price_manager.hpp"
 #include "../memory/state_pool.hpp"
+#include "../memory/station_status_manager.hpp"
+#include "../data/static_stations.hpp"
 #include <format>
 #include <iostream>
 #include <sstream>
 #include <unordered_set>
 
 namespace ev {
+
+namespace {
+std::string sql_escape(std::string_view s) {
+    std::string out;
+    out.reserve(s.size() + 4);
+    for (char c : s) {
+        if (c == '\'') out.push_back('\'');
+        out.push_back(c);
+    }
+    return out;
+}
+} // namespace
 
 DbRepository& DbRepository::instance() {
     static DbRepository repo;
@@ -925,15 +939,16 @@ Result<StationSalesStatsResponseData> DbRepository::get_station_sales_stats(int6
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int64_t now = current_time_ms();
+    int64_t cst_offset = 8 * 3600 * 1000LL;
+    int64_t today_start = ((now + cst_offset) / 86400000LL) * 86400000LL - cst_offset;
     int64_t start_threshold = 0;
 
     if (time_range == "today") {
-        // 当天 00:00:00 毫秒时间戳
-        start_threshold = now - (now % 86400000);
+        start_threshold = today_start;
     } else if (time_range == "7d") {
-        start_threshold = now - (7LL * 86400000);
+        start_threshold = today_start - 6LL * 86400000LL;
     } else { // 30d
-        start_threshold = now - (30LL * 86400000);
+        start_threshold = today_start - 29LL * 86400000LL;
     }
 
     std::string sum_sql = std::format(
@@ -971,23 +986,70 @@ Result<StationSalesStatsResponseData> DbRepository::get_station_sales_stats(int6
     };
 
     if (time_range == "today") {
-        // 当日按 4 小时间隔切片
+        // 当日按 4 小时间隔切片: 00:00, 04:00, 08:00, 12:00, 16:00, 20:00
         data.timeline.time_slots = {"00:00", "04:00", "08:00", "12:00", "16:00", "20:00"};
-        data.timeline.revenue_series = {cents_to_yuan(tot_cents) * 0.05, cents_to_yuan(tot_cents) * 0.05, cents_to_yuan(tot_cents) * 0.25, cents_to_yuan(tot_cents) * 0.35, cents_to_yuan(tot_cents) * 0.20, cents_to_yuan(tot_cents) * 0.10};
-        data.timeline.energy_series = {tot_energy * 0.05, tot_energy * 0.05, tot_energy * 0.25, tot_energy * 0.35, tot_energy * 0.20, tot_energy * 0.10};
-        data.timeline.order_series = {tot_orders / 10, tot_orders / 10, tot_orders * 3 / 10, tot_orders * 3 / 10, tot_orders * 2 / 10, tot_orders / 10};
+        data.timeline.revenue_series.assign(6, 0.0);
+        data.timeline.energy_series.assign(6, 0.0);
+        data.timeline.order_series.assign(6, 0);
+
+        std::string slot_sql = std::format(
+            "SELECT ((created_at - {}) / 14400000) as slot_idx, "
+            "COALESCE(SUM(total_fee_cents), 0), COALESCE(SUM(charged_energy_kwh), 0.0), COUNT(*) "
+            "FROM charging_orders "
+            "WHERE station_id = {} AND order_status IN ('COMPLETED', 'UNSETTLED') AND created_at >= {} "
+            "GROUP BY slot_idx;",
+            start_threshold, station_id, start_threshold
+        );
+        PgResultGuard slot_res(conn->exec(slot_sql.c_str()));
+        if (slot_res.is_ok()) {
+            for (int r = 0; r < slot_res.rows(); ++r) {
+                int64_t s_idx = std::stoll(slot_res.value(r, 0));
+                if (s_idx >= 0 && s_idx < 6) {
+                    int64_t rev_c = std::stoll(slot_res.value(r, 1));
+                    double energy = std::stod(slot_res.value(r, 2));
+                    int64_t ord_c = std::stoll(slot_res.value(r, 3));
+                    data.timeline.revenue_series[s_idx] = cents_to_yuan(rev_c);
+                    data.timeline.energy_series[s_idx] = energy;
+                    data.timeline.order_series[s_idx] = ord_c;
+                }
+            }
+        }
     } else {
         int days = (time_range == "7d") ? 7 : 30;
-        for (int d = days - 1; d >= 0; --d) {
-            int64_t day_start = now - (static_cast<int64_t>(d) * 86400000);
-            time_t t = day_start / 1000;
+        data.timeline.revenue_series.assign(days, 0.0);
+        data.timeline.energy_series.assign(days, 0.0);
+        data.timeline.order_series.assign(days, 0);
+
+        for (int d = 0; d < days; ++d) {
+            int64_t day_ms = start_threshold + static_cast<int64_t>(d) * 86400000LL;
+            time_t t = day_ms / 1000;
             struct tm* tm_info = localtime(&t);
             char buf[32];
             strftime(buf, sizeof(buf), "%Y-%m-%d", tm_info);
             data.timeline.time_slots.push_back(buf);
-            data.timeline.revenue_series.push_back(cents_to_yuan(tot_cents) / days);
-            data.timeline.energy_series.push_back(tot_energy / days);
-            data.timeline.order_series.push_back(tot_orders / days);
+        }
+
+        std::string day_sql = std::format(
+            "SELECT ((created_at - {}) / 86400000) as day_idx, "
+            "COALESCE(SUM(total_fee_cents), 0), COALESCE(SUM(charged_energy_kwh), 0.0), COUNT(*) "
+            "FROM charging_orders "
+            "WHERE station_id = {} AND order_status IN ('COMPLETED', 'UNSETTLED') AND created_at >= {} "
+            "GROUP BY day_idx;",
+            start_threshold, station_id, start_threshold
+        );
+        PgResultGuard day_res(conn->exec(day_sql.c_str()));
+        if (day_res.is_ok()) {
+            for (int r = 0; r < day_res.rows(); ++r) {
+                int64_t d_idx = std::stoll(day_res.value(r, 0));
+                if (d_idx >= 0 && d_idx < days) {
+                    int64_t rev_c = std::stoll(day_res.value(r, 1));
+                    double energy = std::stod(day_res.value(r, 2));
+                    int64_t ord_c = std::stoll(day_res.value(r, 3));
+                    data.timeline.revenue_series[d_idx] = cents_to_yuan(rev_c);
+                    data.timeline.energy_series[d_idx] = energy;
+                    data.timeline.order_series[d_idx] = ord_c;
+                }
+            }
         }
     }
 
@@ -1781,19 +1843,19 @@ Result<AdminDashboardSummaryData> DbRepository::get_admin_dashboard_summary() {
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int64_t now = current_time_ms();
-    int64_t today_start = now - (now % 86400000);
-    int64_t month_start = now - (30LL * 86400000);
+    int64_t cst_offset = 8 * 3600 * 1000LL;
+    int64_t today_start = ((now + cst_offset) / 86400000LL) * 86400000LL - cst_offset;
+    int64_t month_start = today_start - 29LL * 86400000LL;
 
-    // 今日/本月/累计总营收与充电量
+    // 今日/本月/全表总营收与充电量
     std::string sql = std::format(
         "SELECT "
         "COALESCE(SUM(CASE WHEN created_at >= {} THEN total_fee_cents ELSE 0 END), 0) as today_rev, "
         "COALESCE(SUM(CASE WHEN created_at >= {} THEN total_fee_cents ELSE 0 END), 0) as month_rev, "
         "COALESCE(SUM(total_fee_cents), 0) as total_rev, "
         "COALESCE(SUM(CASE WHEN created_at >= {} THEN charged_energy_kwh ELSE 0 END), 0.0) as today_kwh, "
-        "COUNT(CASE WHEN created_at >= {} THEN 1 END) as today_orders, "
-        "COUNT(CASE WHEN order_status = 'CHARGING' THEN 1 END) as active_sessions "
-        "FROM charging_orders WHERE order_status IN ('COMPLETED', 'UNSETTLED', 'CHARGING');",
+        "COUNT(CASE WHEN created_at >= {} THEN 1 END) as today_orders "
+        "FROM charging_orders WHERE order_status IN ('COMPLETED', 'UNSETTLED');",
         today_start, month_start, today_start, today_start
     );
 
@@ -1806,7 +1868,14 @@ Result<AdminDashboardSummaryData> DbRepository::get_admin_dashboard_summary() {
 
     int64_t today_cents = std::stoll(res.value(0, 0));
     int64_t month_cents = std::stoll(res.value(0, 1));
-    int64_t total_cents = std::stoll(res.value(0, 2));
+    int64_t orders_cents = std::stoll(res.value(0, 2));
+
+    // 全盘历史累计基底 (远大于当月数据)
+    int64_t hist_cents = get_platform_metric("historical_revenue_cents", 8865000000LL);
+    int64_t total_cents = hist_cents + orders_cents;
+
+    // 活跃充电会话直接取自内存池最新状态
+    int64_t active_sessions = ChargingStatePool::instance().get_pile_status_overview().in_use_count;
 
     return AdminDashboardSummaryData{
         .today_revenue = cents_to_yuan(today_cents),
@@ -1818,7 +1887,7 @@ Result<AdminDashboardSummaryData> DbRepository::get_admin_dashboard_summary() {
         .today_energy_kwh = std::stod(res.value(0, 3)),
         .today_order_count = std::stoll(res.value(0, 4)),
         .total_user_count = total_users,
-        .active_charging_sessions = std::stoll(res.value(0, 5))
+        .active_charging_sessions = active_sessions
     };
 }
 
@@ -1827,37 +1896,49 @@ Result<AdminRevenueTrendData> DbRepository::get_admin_revenue_trend(int days) {
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
     int64_t now = current_time_ms();
+    int64_t cst_offset = 8 * 3600 * 1000LL;
+    int64_t today_start = ((now + cst_offset) / 86400000LL) * 86400000LL - cst_offset;
+    int64_t start_threshold = today_start - static_cast<int64_t>(days - 1) * 86400000LL;
+
     AdminRevenueTrendData data;
     data.time_range = (days == 7 ? "LAST_7_DAYS" : "LAST_30_DAYS");
+    data.dates.reserve(days);
+    data.revenue_series.assign(days, 0.0);
+    data.energy_kwh_series.assign(days, 0.0);
+    data.order_count_series.assign(days, 0);
 
-    // 统计各日期指标
-    for (int d = days - 1; d >= 0; --d) {
-        int64_t day_start = now - (static_cast<int64_t>(d) * 86400000);
-        day_start = day_start - (day_start % 86400000);
-        int64_t day_end = day_start + 86400000;
-
-        time_t t = day_start / 1000;
+    for (int d = 0; d < days; ++d) {
+        int64_t day_ms = start_threshold + static_cast<int64_t>(d) * 86400000LL;
+        time_t t = day_ms / 1000;
         struct tm* tm_info = localtime(&t);
         char buf[32];
         strftime(buf, sizeof(buf), "%Y-%m-%d", tm_info);
         data.dates.push_back(buf);
+    }
 
-        std::string sql = std::format(
-            "SELECT COALESCE(SUM(total_fee_cents), 0), COALESCE(SUM(charged_energy_kwh), 0.0), COUNT(*) "
-            "FROM charging_orders WHERE created_at >= {} AND created_at < {} AND order_status IN ('COMPLETED', 'UNSETTLED');",
-            day_start, day_end
-        );
+    // 单次高效 SQL 聚合查询，彻底消除原本 30 次循环串行开销
+    std::string sql = std::format(
+        "SELECT ((created_at - {}) / 86400000) as day_idx, "
+        "COALESCE(SUM(total_fee_cents), 0), COALESCE(SUM(charged_energy_kwh), 0.0), COUNT(*) "
+        "FROM charging_orders "
+        "WHERE created_at >= {} AND created_at < {} "
+        "  AND order_status IN ('COMPLETED', 'UNSETTLED') "
+        "GROUP BY day_idx;",
+        start_threshold, start_threshold, today_start + 86400000LL
+    );
 
-        PgResultGuard res(conn->exec(sql.c_str()));
-        if (res.is_ok() && res.rows() > 0) {
-            int64_t rev_cents = std::stoll(res.value(0, 0));
-            data.revenue_series.push_back(cents_to_yuan(rev_cents));
-            data.energy_kwh_series.push_back(std::stod(res.value(0, 1)));
-            data.order_count_series.push_back(std::stoll(res.value(0, 2)));
-        } else {
-            data.revenue_series.push_back(0.0);
-            data.energy_kwh_series.push_back(0.0);
-            data.order_count_series.push_back(0);
+    PgResultGuard res(conn->exec(sql.c_str()));
+    if (res.is_ok()) {
+        for (int r = 0; r < res.rows(); ++r) {
+            int64_t d_idx = std::stoll(res.value(r, 0));
+            if (d_idx >= 0 && d_idx < days) {
+                int64_t rev_cents = std::stoll(res.value(r, 1));
+                double energy_kwh = std::stod(res.value(r, 2));
+                int64_t ord_count = std::stoll(res.value(r, 3));
+                data.revenue_series[d_idx] = cents_to_yuan(rev_cents);
+                data.energy_kwh_series[d_idx] = energy_kwh;
+                data.order_count_series[d_idx] = ord_count;
+            }
         }
     }
 
@@ -2226,6 +2307,205 @@ Result<std::vector<std::string>> DbRepository::timeout_expired_reservations() {
     });
 
     return res;
+}
+
+// ==========================================
+// 8. 平台全盘指标与每日跨天模拟
+// ==========================================
+
+int64_t DbRepository::get_platform_metric(std::string_view key, int64_t default_val) {
+    auto conn = DbPool::instance().acquire_reader();
+    if (!conn) return default_val;
+    std::string sql = std::format("SELECT metric_val FROM platform_metrics WHERE metric_key = '{}';", key);
+    PgResultGuard res(conn->exec(sql.c_str()));
+    if (res.is_ok() && res.rows() > 0) {
+        return std::stoll(res.value(0, 0));
+    }
+    return default_val;
+}
+
+void DbRepository::set_platform_metric(std::string_view key, int64_t val) {
+    auto conn = DbPool::instance().acquire();
+    if (!conn) return;
+    int64_t now = current_time_ms();
+    std::string sql = std::format(
+        "INSERT INTO platform_metrics (metric_key, metric_val, updated_at) VALUES ('{}', {}, {}) "
+        "ON CONFLICT (metric_key) DO UPDATE SET metric_val = EXCLUDED.metric_val, updated_at = EXCLUDED.updated_at;",
+        key, val, now
+    );
+    conn->exec(sql.c_str());
+}
+
+void DbRepository::add_platform_metric(std::string_view key, int64_t delta) {
+    auto conn = DbPool::instance().acquire();
+    if (!conn) return;
+    int64_t now = current_time_ms();
+    std::string sql = std::format(
+        "INSERT INTO platform_metrics (metric_key, metric_val, updated_at) VALUES ('{}', {}, {}) "
+        "ON CONFLICT (metric_key) DO UPDATE SET metric_val = platform_metrics.metric_val + EXCLUDED.metric_val, updated_at = EXCLUDED.updated_at;",
+        key, delta, now
+    );
+    conn->exec(sql.c_str());
+}
+
+void DbRepository::prune_orders_older_than_30_days() {
+    auto conn = DbPool::instance().acquire();
+    if (!conn) return;
+    int64_t now = current_time_ms();
+    int64_t cutoff = now - 30LL * 86400000LL;
+
+    // 1. 统计即将被淘汰的历史订单营收总和，沉淀到历史总营收基底中
+    std::string sum_sql = std::format(
+        "SELECT COALESCE(SUM(total_fee_cents), 0) FROM charging_orders WHERE created_at < {} AND order_status IN ('COMPLETED', 'UNSETTLED');",
+        cutoff
+    );
+    PgResultGuard res(conn->exec(sum_sql.c_str()));
+    if (res.is_ok() && res.rows() > 0) {
+        int64_t deleted_cents = std::stoll(res.value(0, 0));
+        if (deleted_cents > 0) {
+            add_platform_metric("historical_revenue_cents", deleted_cents);
+        }
+    }
+
+    // 2. 执行物理删除，确保数据库仅保留 30 天内的订单
+    std::string del_sql = std::format("DELETE FROM charging_orders WHERE created_at < {};", cutoff);
+    conn->exec(del_sql.c_str());
+}
+
+void DbRepository::generate_orders_for_day(int64_t day_idx) {
+    int64_t now = current_time_ms();
+    int64_t cst_offset = 8 * 3600 * 1000LL;
+    int64_t day_start_ms = day_idx * 86400000LL - cst_offset;
+
+    int64_t total_users = 20000;
+    {
+        auto conn = DbPool::instance().acquire_reader();
+        if (conn) {
+            PgResultGuard u_res(conn->exec("SELECT COUNT(*) FROM users;"));
+            if (u_res.is_ok() && u_res.rows() > 0) {
+                total_users = std::max<int64_t>(1, std::stoll(u_res.value(0, 0)));
+            }
+        }
+    }
+
+    constexpr int ORDER_BATCH = 2000;
+    std::string o_sql;
+    o_sql.reserve(1024 * 512);
+    int batch_count = 0;
+
+    auto flush_batch = [&]() {
+        if (batch_count == 0) return;
+        o_sql += " ON CONFLICT (order_id) DO NOTHING;";
+        auto conn = DbPool::instance().acquire();
+        if (conn) {
+            conn->exec(o_sql.c_str());
+        }
+        o_sql.clear();
+        batch_count = 0;
+    };
+
+    for (size_t i = 0; i < STATIC_STATION_COUNT; ++i) {
+        int64_t sid = STATIC_STATIONS[i].station_id;
+        if (!StationStatusManager::instance().is_online(sid)) continue;
+
+        auto p_list = ChargingStatePool::instance().get_piles_by_station(sid);
+        if (p_list.empty()) continue;
+
+        double elec_price = 1.15 + static_cast<double>((static_cast<uint64_t>(sid) * 104729ULL + 12345ULL) % 71) * 0.01;
+        double serv_price = 0.35;
+
+        uint64_t seed = (static_cast<uint64_t>(sid) * 314159ULL) ^ (static_cast<uint64_t>(day_idx) * 271828ULL);
+        int station_tier = static_cast<int>((static_cast<uint64_t>(sid) * 1337ULL) % 100);
+        int orders_today = 0;
+        if (station_tier < 15) {
+            orders_today = 1 + static_cast<int>(seed % 4);
+        } else if (station_tier < 70) {
+            orders_today = (seed % 3 == 0) ? 0 : (1 + static_cast<int>(seed % 2));
+        } else {
+            orders_today = (seed % 2 == 0) ? 0 : 1;
+        }
+
+        for (int k = 0; k < orders_today; ++k) {
+            uint64_t ord_seed = seed ^ (static_cast<uint64_t>(k) * 65537ULL);
+            const auto& selected_pile = p_list[ord_seed % p_list.size()];
+            bool is_fast = (selected_pile.type == "FAST");
+
+            int hour = (ord_seed % 100 < 75) ? (8 + static_cast<int>(ord_seed % 14)) : static_cast<int>(ord_seed % 24);
+            int minute = static_cast<int>((ord_seed / 24) % 60);
+            int second = static_cast<int>((ord_seed / 1440) % 60);
+            int64_t start_time = day_start_ms + (hour * 3600LL + minute * 60LL + second) * 1000LL;
+            if (start_time > now) start_time = now - 1800000LL;
+
+            int dur_mins = is_fast ? (30 + static_cast<int>(ord_seed % 45)) : (120 + static_cast<int>(ord_seed % 240));
+            int64_t end_time = start_time + dur_mins * 60 * 1000LL;
+            if (end_time > now) end_time = now;
+
+            int start_soc = 15 + static_cast<int>(ord_seed % 25);
+            int end_soc = 85 + static_cast<int>(ord_seed % 15);
+            if (end_soc > 100) end_soc = 100;
+
+            double battery_cap = 50.0 + static_cast<double>(ord_seed % 35);
+            double charged_energy = std::round(battery_cap * (end_soc - start_soc) / 100.0 * 100.0) / 100.0;
+            int64_t elec_cents = static_cast<int64_t>(charged_energy * elec_price * 100.0);
+            int64_t serv_cents = static_cast<int64_t>(charged_energy * serv_price * 100.0);
+            int overtime_mins = (ord_seed % 100 < 12) ? (15 + static_cast<int>(ord_seed % 4) * 15) : 0;
+            int64_t overtime_cents = (overtime_mins / 15) * 500LL;
+            int64_t total_cents = elec_cents + serv_cents + overtime_cents;
+
+            int64_t uid = 1 + static_cast<int64_t>(ord_seed % total_users);
+            std::string st_status = (ord_seed % 100 < 97) ? "COMPLETED" : "UNSETTLED";
+            std::string ord_id = std::format("ORD_{}_{:05d}_{:02d}", start_time, sid, k);
+            std::string stop_rsn = (ord_seed % 2 == 0) ? "USER_MANUAL_STOP" : "TARGET_SOC_REACHED";
+            int64_t settled_at = (st_status == "COMPLETED") ? end_time : 0;
+
+            if (batch_count == 0) {
+                o_sql = "INSERT INTO charging_orders (order_id, user_id, station_id, pile_id, strategy_type, strategy_value, order_status, start_time, end_time, start_soc, end_soc, charged_energy_kwh, electricity_price, electricity_fee_cents, service_price, service_fee_cents, overtime_grace_minutes, overtime_duration_minutes, overtime_rate_per_15min, overtime_fee_cents, total_fee_cents, stop_reason, settled_at, created_at, updated_at) VALUES ";
+            } else {
+                o_sql += ", ";
+            }
+
+            o_sql += std::format("('{}', {}, {}, '{}', 'FULL', 0.0, '{}', {}, {}, {}, {}, {:.2f}, {:.2f}, {}, {:.2f}, {}, 15, {}, 5.00, {}, {}, '{}', {}, {}, {})",
+                                 sql_escape(ord_id), uid, sid, sql_escape(selected_pile.pile_id),
+                                 st_status, start_time, end_time, start_soc, end_soc, charged_energy,
+                                 elec_price, elec_cents, serv_price, serv_cents,
+                                 overtime_mins, overtime_cents, total_cents,
+                                 stop_rsn, settled_at, start_time, end_time);
+
+            batch_count++;
+            if (batch_count >= ORDER_BATCH) {
+                flush_batch();
+            }
+        }
+    }
+    flush_batch();
+}
+
+void DbRepository::check_and_simulate_daily_orders() {
+    int64_t now = current_time_ms();
+    int64_t cst_offset = 8 * 3600 * 1000LL;
+    int64_t current_day = (now + cst_offset) / 86400000LL;
+
+    int64_t last_day = get_platform_metric("last_simulated_day", 0);
+    if (last_day == 0) {
+        set_platform_metric("last_simulated_day", current_day);
+        return;
+    }
+
+    if (current_day > last_day) {
+        std::cout << "[Simulator] >>> Detected day transition: last_simulated_day=" << last_day 
+                  << ", current_day=" << current_day << ". Generating new daily orders...\n";
+        int64_t start_fill_day = std::max(last_day + 1, current_day - 29);
+        for (int64_t d = start_fill_day; d <= current_day; ++d) {
+            generate_orders_for_day(d);
+        }
+
+        prune_orders_older_than_30_days();
+        set_platform_metric("last_simulated_day", current_day);
+
+        RedisCache::instance().del_prefix("cache:dashboard:");
+        RedisCache::instance().del_prefix("cache:station:");
+        std::cout << "[Simulator] >>> Completed daily simulation and pruned orders older than 30 days.\n";
+    }
 }
 
 } // namespace ev

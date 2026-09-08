@@ -1351,7 +1351,8 @@
 ---
 
 #### 1. 查询指定充电站的当日 / 7天 / 一个月销售业绩情况
-- **接口路径**：`GET /api/v1/admin/stations/{station_id}/sales-stats`
+
+- **接口路径**：`GET /api/v1/admin/stations/{station_id}/sales`（兼容别名路径：`GET /api/v1/admin/stations/{station_id}/sales-stats`）
 - **认证方式**：`Bearer <admin_token>`
 - **查询参数 (Query Params)**：
   
@@ -1386,6 +1387,7 @@
   }
   ```
 - **成功响应 (`200 OK` - 近7天/近30天销售示例)**：
+  
   ```json
   {
     "code": 0,
@@ -1856,6 +1858,7 @@
 - **鉴权方式**：可在建立握手时携带 Header `Authorization: Bearer <token>` 或 Query 参数 `?token=<access_token>`
 - **推送频率**：每 1000ms / 500ms 服务端主动下发 1 帧
 - **帧消息格式 1 (正常充电中推送 - Server -> Client)**：
+  
   ```json
   {
     "event": "TELEMETRY_UPDATE",

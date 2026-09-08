@@ -111,6 +111,16 @@ public:
     Result<void> fulfill_reservation(int64_t user_id, std::string_view pile_id);
     Result<std::vector<std::string>> timeout_expired_reservations();
 
+    // ==========================================
+    // 8. 平台指标与运行时跨天订单模拟
+    // ==========================================
+    int64_t get_platform_metric(std::string_view key, int64_t default_val = 0);
+    void set_platform_metric(std::string_view key, int64_t val);
+    void add_platform_metric(std::string_view key, int64_t delta);
+    void prune_orders_older_than_30_days();
+    void generate_orders_for_day(int64_t day_idx);
+    void check_and_simulate_daily_orders();
+
 private:
     DbRepository() = default;
 };

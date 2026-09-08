@@ -1,7 +1,6 @@
 .idea
 boost_1_92_0
 build/
-server/build/
 server/build
 glaze-8.3.0
 cmake-build-*/
@@ -9,10 +8,10 @@ server/cmake-build-*/
 server/cmake-build-debug
 server/build_bench
 server/build_standard
-server/build_msvc/
 server/build_msvc
 server/data/seed_*.json
 server/data/stations_processed.json
+server/tests
 progress-governor
 项目说明书.doc
 venv/

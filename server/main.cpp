@@ -58,17 +58,34 @@ int main(int argc, char* argv[]) {
 
     // 3. 询问是否需要清空数据库并重新导入数据? (y/N)
     bool skip_prompt = false;
-    if (const char* env_no_prompt = std::getenv("NO_PROMPT")) {
-        std::string_view s(env_no_prompt);
-        while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.remove_prefix(1);
-        while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.remove_suffix(1);
-        if (s == "1" || s == "true" || s == "TRUE" || s == "yes" || s == "YES") {
-            skip_prompt = true;
-        }
-    }
     bool do_reset_and_import = false;
 
+    for (int i = 1; i < argc; ++i) {
+        std::string_view arg = argv[i];
+        if (arg == "--reset" || arg == "--reseed") {
+            do_reset_and_import = true;
+            skip_prompt = true;
+            break;
+        }
+    }
+
+    if (!skip_prompt && const_cast<const char*>(std::getenv("RESET_DB"))) {
+        do_reset_and_import = true;
+        skip_prompt = true;
+    }
+
     if (!skip_prompt) {
+        if (const char* env_no_prompt = std::getenv("NO_PROMPT")) {
+            std::string_view s(env_no_prompt);
+            while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.remove_prefix(1);
+            while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.remove_suffix(1);
+            if (s == "1" || s == "true" || s == "TRUE" || s == "yes" || s == "YES") {
+                skip_prompt = true;
+            }
+        }
+    }
+
+    if (!skip_prompt && !do_reset_and_import) {
         std::cout << "是否清空数据库并重新导入数据? (y/N): " << std::flush;
         std::string choice;
         if (std::getline(std::cin, choice)) {
@@ -95,6 +112,8 @@ int main(int argc, char* argv[]) {
         std::println(">>> 保持现有数据库内容不变，直接启动服务。\n");
         // 保险检查：若数据库完全没有任何数据（首次启动），自动导入
         ev::SeedDataGenerator::populate_if_empty("data");
+        // 若数据库已有数据，检查并模拟补齐可能存在的跨天订单
+        ev::DbRepository::instance().check_and_simulate_daily_orders();
     }
 
     // 4. 构建真实电站常量 R-Tree 空间索引与电桩状态内存池

@@ -118,7 +118,7 @@ public:
                 ChargingStatePool::instance().stop_charging(p.pile_id);
 
                 // 数据库更新订单状态为结束
-                DbRepository::instance().stop_order(
+                (void)DbRepository::instance().stop_order(
                     oid,
                     now,
                     end_soc,
@@ -133,7 +133,7 @@ public:
 
                 // 钱包同步扣款扣账结算
                 std::string idem = std::format("OFFLINE_SETTLE_{}_{}", oid, now);
-                DbRepository::instance().settle_order_with_wallet(oid, idem);
+                (void)DbRepository::instance().settle_order_with_wallet(oid, idem);
 
                 // 广播订单结束推送
                 WsManager::instance().broadcast_charging_finished(ChargingFinishedFrame{
@@ -197,7 +197,7 @@ public:
         const http::request<http::string_body>& req
     ) {
         PileRestartRequest r_req;
-        glz::read_json(r_req, req.body());
+        (void)glz::read_json(r_req, req.body());
 
         auto p_res = DbRepository::instance().get_pile_by_id(pile_id);
         if (!p_res) return make_error_response(p_res.error());
@@ -209,7 +209,7 @@ public:
 
         // 重启并重置状态为 IDLE
         ChargingStatePool::instance().set_pile_status(pile_id, "IDLE");
-        DbRepository::instance().update_pile_status(pile_id, "IDLE");
+        (void)DbRepository::instance().update_pile_status(pile_id, "IDLE");
 
         WsManager::instance().broadcast_pile_status(PileStatusChangedBroadcastFrame{
             .event = "PILE_STATUS_CHANGED",
@@ -266,20 +266,20 @@ public:
                 std::string oid = p_state->active_order_id;
                 int64_t now = current_time_ms();
                 ChargingStatePool::instance().stop_charging(pile_id);
-                DbRepository::instance().stop_order(
+                (void)DbRepository::instance().stop_order(
                     oid, now, p_state->current_soc, p_state->charged_energy_kwh,
                     p_state->electricity_fee_cents, p_state->service_fee_cents,
                     p_state->overtime_duration_minutes, p_state->overtime_fee_cents,
                     p_state->total_fee_cents, "ADMIN_PILE_OFFLINE"
                 );
                 std::string idem = std::format("PILE_OFFLINE_SETTLE_{}_{}", oid, now);
-                DbRepository::instance().settle_order_with_wallet(oid, idem);
+                (void)DbRepository::instance().settle_order_with_wallet(oid, idem);
             }
             ChargingStatePool::instance().release_reserved_pile(pile_id);
         }
 
         ChargingStatePool::instance().set_pile_status(pile_id, norm);
-        DbRepository::instance().update_pile_status(pile_id, norm);
+        (void)DbRepository::instance().update_pile_status(pile_id, norm);
 
         WsManager::instance().broadcast_pile_status(PileStatusChangedBroadcastFrame{
             .event = "PILE_STATUS_CHANGED",
@@ -520,7 +520,7 @@ public:
         const http::request<http::string_body>& req
     ) {
         AdminOrderRefundRequest rf_req;
-        glz::read_json(rf_req, req.body());
+        (void)glz::read_json(rf_req, req.body());
 
         auto o_res = DbRepository::instance().get_order_by_id(order_id);
         if (!o_res) return make_error_response(o_res.error());

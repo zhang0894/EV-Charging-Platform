@@ -192,7 +192,7 @@ void StationManagementModel::fetchStationSales(int stationId, const QString &tim
     }
 
     QUrl url(m_serverBase
-             + QStringLiteral("/api/v1/admin/stations/%1/sales-stats").arg(stationId));
+             + QStringLiteral("/api/v1/admin/stations/%1/sales").arg(stationId));
     QUrlQuery query;
     query.addQueryItem(QStringLiteral("time_range"), timeRange);
     url.setQuery(query);
@@ -386,7 +386,7 @@ void StationManagementModel::handleSalesReply(QNetworkReply *reply, int stationI
     reply->deleteLater();
 
     const QString apiTag =
-        QStringLiteral("GET /api/v1/admin/stations/%1/sales-stats").arg(stationId);
+        QStringLiteral("GET /api/v1/admin/stations/%1/sales").arg(stationId);
 
     if (netError != QNetworkReply::NoError) {
         const QString msg = QStringLiteral("%1 网络请求失败 (HTTP %2): %3")
