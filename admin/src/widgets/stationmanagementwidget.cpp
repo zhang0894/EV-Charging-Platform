@@ -8,6 +8,7 @@
 #include <QFrame>
 #include <QLineEdit>
 #include <QSpinBox>
+#include <QDoubleSpinBox>
 #include <QComboBox>
 #include <QPushButton>
 #include <QTableView>
@@ -422,10 +423,20 @@ void StationManagementWidget::showAddStationDialog()
     nameEdit->setPlaceholderText(tr("必填，如：XX科技园充电站"));
     auto *addrEdit = new QLineEdit(&dlg);
     addrEdit->setPlaceholderText(tr("必填，如：深圳市南山区XX路 1 号"));
-    auto *latEdit = new QLineEdit(&dlg);
-    latEdit->setPlaceholderText(tr("可选，如：22.5431"));
-    auto *lonEdit = new QLineEdit(&dlg);
-    lonEdit->setPlaceholderText(tr("可选，如：113.9527"));
+    // 纬度：QDoubleSpinBox，范围 -90 ~ 90（地球纬度），6 位小数（≈0.11m 精度）
+    auto *latSpin = new QDoubleSpinBox(&dlg);
+    latSpin->setRange(-90.0, 90.0);
+    latSpin->setDecimals(6);
+    latSpin->setSingleStep(0.0001);
+    latSpin->setValue(0.0);
+    latSpin->setSpecialValueText(tr("未设置"));
+    // 经度：QDoubleSpinBox，范围 -180 ~ 180（地球经度），6 位小数
+    auto *lonSpin = new QDoubleSpinBox(&dlg);
+    lonSpin->setRange(-180.0, 180.0);
+    lonSpin->setDecimals(6);
+    lonSpin->setSingleStep(0.0001);
+    lonSpin->setValue(0.0);
+    lonSpin->setSpecialValueText(tr("未设置"));
     // 电桩数量：QSpinBox 限制只能输入非负整数，默认 0
     auto *pileCountSpin = new QSpinBox(&dlg);
     pileCountSpin->setRange(0, 9999);
@@ -434,8 +445,8 @@ void StationManagementWidget::showAddStationDialog()
 
     form->addRow(tr("站名："), nameEdit);
     form->addRow(tr("地址："), addrEdit);
-    form->addRow(tr("纬度："), latEdit);
-    form->addRow(tr("经度："), lonEdit);
+    form->addRow(tr("纬度："), latSpin);
+    form->addRow(tr("经度："), lonSpin);
     form->addRow(tr("电桩数量："), pileCountSpin);
     form->addRow(new QLabel(tr("注：其余字段使用默认值，仅保存于本地内存，程序退出后自动清除。"), &dlg));
 
@@ -446,25 +457,24 @@ void StationManagementWidget::showAddStationDialog()
     form->addRow(btnBox);
 
     // 校验：站名/地址必填，通过后才关闭对话框
-    connect(btnBox, &QDialogButtonBox::accepted, &dlg, [&dlg, nameEdit, addrEdit, latEdit, lonEdit, pileCountSpin, this]() {
+    connect(btnBox, &QDialogButtonBox::accepted, &dlg, [&dlg, nameEdit, addrEdit, latSpin, lonSpin, pileCountSpin, this]() {
         const QString name = nameEdit->text().trimmed();
         const QString addr = addrEdit->text().trimmed();
         if (name.isEmpty() || addr.isEmpty()) {
             QMessageBox::warning(&dlg, tr("输入不完整"), tr("站名与地址为必填项，请补充后再确认。"));
             return;
         }
-        // 经纬度：不填或格式非法时默认 0.000000
-        bool latOk = true, lonOk = true;
-        const double lat = latEdit->text().trimmed().toDouble(&latOk);
-        const double lon = lonEdit->text().trimmed().toDouble(&lonOk);
-        // 电桩数量：QSpinBox 仅接受整数，不填保持默认 0
+        // 经纬度：QDoubleSpinBox 已限制合法范围，0.0 表示未设置（几内亚湾，无真实冲突）
+        const double lat = latSpin->value();
+        const double lon = lonSpin->value();
+        // 电桩数量：QSpinBox 仅接受整数
         const int pileCount = pileCountSpin->value();
 
         StationManagementModel::StationInfo info;
         info.station_name = name;
         info.address = addr;
-        info.latitude = latOk ? lat : 0.0;
-        info.longitude = lonOk ? lon : 0.0;
+        info.latitude = lat;
+        info.longitude = lon;
         info.total_piles = pileCount;
         m_model->addMockStation(info); // 其余字段由 Model 填充默认值并分配负数 ID
 

@@ -243,12 +243,18 @@ void OrderManagementWidget::buildUi()
     m_tableView->verticalHeader()->setVisible(false);
     m_tableView->verticalHeader()->setDefaultSectionSize(44);
     m_tableView->horizontalHeader()->setHighlightSections(false);
-    m_tableView->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    // 其余页面均使用 Stretch：操作列固定宽度，剩余列均分拉伸填满窗口，
+    // 避免 ResizeToContents 导致的横向滚动条和窗口放大后右侧留空
+    m_tableView->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     // 操作列固定宽度（详情 + 退款两个按钮并排）
     m_tableView->horizontalHeader()->setSectionResizeMode(
         OrderManagementModel::ActionCol, QHeaderView::Fixed);
     m_tableView->setColumnWidth(OrderManagementModel::ActionCol, 170);
-    m_tableView->horizontalHeader()->setStretchLastSection(false);
+    // 隐藏"充电量/电费/服务费/超时费"4 列——详情弹窗内完整展示
+    m_tableView->hideColumn(OrderManagementModel::EnergyCol);
+    m_tableView->hideColumn(OrderManagementModel::ElecFeeCol);
+    m_tableView->hideColumn(OrderManagementModel::ServFeeCol);
+    m_tableView->hideColumn(OrderManagementModel::OvertimeFeeCol);
     rootLayout->addWidget(m_tableView, 1);
 
     // ---------------- 底部分页栏 ----------------
