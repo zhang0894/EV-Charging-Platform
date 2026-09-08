@@ -106,8 +106,30 @@ int main(int argc, char* argv[]) {
     ev::ChargingStatePool::instance().init_from_seed_piles("data");
     ev::ChargingStatePool::instance().sync_missing_piles_from_db();
     ev::ChargingStatePool::instance().load_active_reservations_from_db();
+
+    // 级联同步初始下线电站（包括暂停营业电站）的电桩状态
+    size_t init_offline_stations = 0;
+    for (size_t i = 0; i < ev::STATIC_STATION_COUNT; ++i) {
+        int64_t sid = ev::STATIC_STATIONS[i].station_id;
+        if (!ev::StationStatusManager::instance().is_online(sid)) {
+            ev::ChargingStatePool::instance().set_station_piles_offline(sid);
+            init_offline_stations++;
+        }
+    }
+
+    // 启动时同步清洗数据库中可能存在的 (暂停营业) 脏名称并将状态标记为下线
+    {
+        auto db_conn = ev::DbPool::instance().acquire();
+        if (db_conn) {
+            db_conn->exec(
+                "UPDATE stations SET station_name = REPLACE(REPLACE(station_name, '(暂停营业)', ''), '（暂停营业）', ''), status = 2 "
+                "WHERE station_name LIKE '%(暂停营业)%' OR station_name LIKE '%（暂停营业）%';"
+            );
+        }
+    }
+
     std::println("  [OK] 成功构建 {} 个真实充电站 R-Tree 空间几何索引与 16 个行政区索引", ev::STATIC_STATION_COUNT);
-    std::println("  [OK] 成功为全量充电站装载充电桩，恢复活跃预约，状态池初始化就绪");
+    std::println("  [OK] 成功为全量充电站装载充电桩，恢复活跃预约，初始化 {} 座下线/暂停营业电站", init_offline_stations);
 
     // 4.1 恢复冻结用户风控状态与 Token 吊销时间戳
     std::println(">>> 4.1 正在同步冻结用户风控名单...");

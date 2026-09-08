@@ -38,15 +38,28 @@ def main():
 
     # 1. 生成紧凑的 stations_processed.json 用于 C++23 #embed 与 Glaze 反序列化
     processed_stations = []
+    suspended_count = 0
     for s in stations_raw:
+        raw_name = s["name"].strip()
+        is_online = True
+        if "(暂停营业)" in raw_name or "（暂停营业）" in raw_name:
+            is_online = False
+            suspended_count += 1
+            clean_name = raw_name.replace("(暂停营业)", "").replace("（暂停营业）", "").strip()
+        else:
+            clean_name = raw_name
+
         processed_stations.append({
             "station_id": int(s["id"]),
             "district_code": int(s["district_code"]),
             "latitude": round(float(s["latitude"]), 6),
             "longitude": round(float(s["longitude"]), 6),
-            "name": s["name"].strip(),
-            "address": s["address"].strip() if s.get("address") else ""
+            "name": clean_name,
+            "address": s["address"].strip() if s.get("address") else "",
+            "is_online": is_online
         })
+
+    print(f">>> Suspended stations: {suspended_count}, Online stations: {station_count - suspended_count}")
 
     print(f">>> Writing {out_stations_file}...")
     with open(out_stations_file, "w", encoding="utf-8") as f:

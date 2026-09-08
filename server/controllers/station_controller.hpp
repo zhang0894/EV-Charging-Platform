@@ -191,7 +191,6 @@ public:
                     .fast_piles_idle = summary.fast_piles_idle,
                     .slow_piles_idle = summary.slow_piles_idle,
                     .has_fast_pile = summary.has_fast_pile,
-                    .station_status = is_on ? 1 : 2,
                     .is_online = is_on
                 });
             }
@@ -286,7 +285,6 @@ public:
             .fast_piles_idle = summary.fast_piles_idle,
             .slow_piles_idle = summary.slow_piles_idle,
             .has_fast_pile = summary.has_fast_pile,
-            .station_status = is_on ? 1 : 2,
             .is_online = is_on
         };
 

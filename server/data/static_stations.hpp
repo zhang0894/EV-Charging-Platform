@@ -49,6 +49,7 @@ struct StaticStation {
     double longitude{};
     std::string_view name{};
     std::string_view address{};
+    bool is_online{true};
 };
 
 constexpr size_t STATIC_STATION_COUNT = 8565;

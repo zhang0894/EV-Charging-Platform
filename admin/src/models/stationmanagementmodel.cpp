@@ -254,10 +254,14 @@ void StationManagementModel::populateStations(const QJsonArray &stations)
             // 兼容旧字段（模拟电站 JSON 中仍为 0.0）
             availRate = s.value(QStringLiteral("online_rate")).toDouble();
         }
-        // 状态字段：新接口为 station_status（int），模拟电站 JSON 仍用 status，做兼容读取
-        int status = s.value(QStringLiteral("station_status")).toInt(0);
-        if (status == 0 && s.contains(QStringLiteral("status"))) {
-            status = s.value(QStringLiteral("status")).toInt();
+        // 状态字段：统一使用 is_online（bool），兼容旧字段 status / station_status
+        int status = 1;
+        if (s.contains(QStringLiteral("is_online"))) {
+            status = s.value(QStringLiteral("is_online")).toBool(true) ? 1 : 2;
+        } else if (s.contains(QStringLiteral("station_status"))) {
+            status = s.value(QStringLiteral("station_status")).toInt(1);
+        } else if (s.contains(QStringLiteral("status"))) {
+            status = s.value(QStringLiteral("status")).toInt(1);
         }
 
         // 站ID 列

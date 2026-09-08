@@ -19,7 +19,18 @@ public:
         for (size_t i = 0; i < MAX_STATIONS; ++i) {
             status_table_[i].store(true, std::memory_order_relaxed);
         }
-        online_count_.store(STATIC_STATION_COUNT, std::memory_order_relaxed);
+        size_t on_count = 0;
+        for (size_t i = 0; i < STATIC_STATION_COUNT; ++i) {
+            const auto& st = STATIC_STATIONS[i];
+            bool on = st.is_online;
+            if (st.station_id >= 1 && static_cast<size_t>(st.station_id) < MAX_STATIONS) {
+                status_table_[st.station_id].store(on, std::memory_order_relaxed);
+                if (on) {
+                    on_count++;
+                }
+            }
+        }
+        online_count_.store(on_count, std::memory_order_relaxed);
     }
 
     bool is_online(int64_t station_id) const {

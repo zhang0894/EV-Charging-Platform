@@ -686,7 +686,6 @@
           "fast_piles_idle": 12,
           "slow_piles_idle": 2,
           "has_fast_pile": true,
-          "station_status": 1,
           "is_online": true
         },
         {
@@ -709,7 +708,6 @@
           "fast_piles_idle": 14,
           "slow_piles_idle": 6,
           "has_fast_pile": true,
-          "station_status": 1,
           "is_online": true
         }
       ]
@@ -761,7 +759,6 @@
       "fast_piles_idle": 14,
       "slow_piles_idle": 6,
       "has_fast_pile": true,
-      "station_status": 1,
       "is_online": true
     },
     "timestamp": 1772607600000

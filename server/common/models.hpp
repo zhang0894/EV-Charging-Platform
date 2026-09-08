@@ -294,7 +294,6 @@ struct StationNearbyCardDTO {
     int fast_piles_idle{0};
     int slow_piles_idle{0};
     bool has_fast_pile{false}; // 是否拥有直流快充桩
-    int station_status{1}; // 1: 运营中/在线, 2: 维护/已下线
     bool is_online{true};  // 在线状态标记
 };
 
