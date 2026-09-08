@@ -43,7 +43,7 @@ inline std::string_view get_district_name_by_code(uint8_t code) {
 }
 
 struct StaticStation {
-    int32_t station_id{};    // 唯一高效连续整数 ID (1 ~ 8569)
+    int32_t station_id{};    // 唯一高效连续整数 ID (1 ~ 8565)
     uint8_t district_code{}; // 0 ~ 15 编号
     double latitude{};
     double longitude{};
@@ -51,7 +51,7 @@ struct StaticStation {
     std::string_view address{};
 };
 
-constexpr size_t STATIC_STATION_COUNT = 8569;
+constexpr size_t STATIC_STATION_COUNT = 8565;
 
 #include <fstream>
 #include <sstream>

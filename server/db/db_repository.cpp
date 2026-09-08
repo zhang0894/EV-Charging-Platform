@@ -390,8 +390,35 @@ Result<void> DbRepository::update_user_status(int64_t user_id, int status) {
     PgResultGuard res(conn->exec_prepared("stmt_update_user_status", 3, params));
     if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
 
+    // 同步更新 user_wallets 钱包账户状态
+    conn->prepare("stmt_update_user_wallet_status", "UPDATE user_wallets SET status = $1, updated_at = $2 WHERE user_id = $3;", 3);
+    conn->exec_prepared("stmt_update_user_wallet_status", 3, params);
+
     RedisCache::instance().del(std::format("cache:user:model:{}", user_id));
+    RedisCache::instance().del(std::format("cache:user:wallet:{}", user_id));
     return {};
+}
+
+Result<std::vector<std::pair<int64_t, int64_t>>> DbRepository::get_frozen_users_info() {
+    auto conn = DbPool::instance().acquire_reader();
+    if (!conn) return std::unexpected(AppError::DatabaseError);
+
+    PgResultGuard res(conn->exec("SELECT user_id, updated_at FROM users WHERE status = 2;"));
+    if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
+
+    std::vector<std::pair<int64_t, int64_t>> result;
+    result.reserve(res.rows());
+    for (int i = 0; i < res.rows(); ++i) {
+        int64_t uid = std::stoll(res.value(i, 0));
+        int64_t upd = 0;
+        try {
+            upd = std::stoll(res.value(i, 1));
+        } catch (...) {
+            upd = current_time_ms();
+        }
+        result.emplace_back(uid, upd);
+    }
+    return result;
 }
 
 Result<UserAdminListResponseData> DbRepository::get_users_admin_paged(

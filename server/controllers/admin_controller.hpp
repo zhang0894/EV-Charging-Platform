@@ -3,6 +3,7 @@
 #include "../common/types.hpp"
 #include "../common/error.hpp"
 #include "../common/models.hpp"
+#include "../common/auth_token.hpp"
 #include "../common/response.hpp"
 #include "../db/db_repository.hpp"
 #include "../memory/state_pool.hpp"
@@ -323,6 +324,13 @@ public:
 
         auto res = DbRepository::instance().update_user_status(user_id, sc_req.status);
         if (!res) return make_error_response(res.error());
+
+        if (sc_req.status == 2) {
+            AuthTokenManager::set_user_frozen(user_id, true);
+            AuthTokenManager::revoke_user_tokens(user_id);
+        } else if (sc_req.status == 1) {
+            AuthTokenManager::set_user_frozen(user_id, false);
+        }
 
         int64_t now = current_time_ms();
         UserStatusChangeResponseData data{

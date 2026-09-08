@@ -120,6 +120,13 @@
   - **手机号登录** (`POST /api/v1/auth/login`)：仅供已注册用户快捷登录。若数据库中不存在该手机号，系统返回 `10001` 业务错误码 (`User not found`)，不再自动注册。
   - **账号注册与自动登录** (`POST /api/v1/auth/register`)：新用户通过手机号与密码注册，校验手机号唯一性。注册成功后视同登录，直接返回包含 Token 与用户信息的完整凭证。
   - **手机号+密码登录** (`POST /api/v1/auth/login-password`)：支持已注册车主通过手机号与密码进行双因子认证登录。
+- **Token 有效期与即时风控机制**：
+  - **Access Token 有效期**：`120` 秒（2 分钟，登录响应返回 `expires_in: 120`），用于所有受保护业务接口的高频鉴权。
+  - **Refresh Token 有效期**：`604800` 秒（7 天），用于短期 Access Token 过期后安全置换新凭证 (`POST /api/v1/auth/refresh`)。
+  - **账号冻结即时失效**：管理端将用户账号置为冻结（`status = 2`）后，系统立即生效：
+    1. 对应账号已签发的 Access Token 与 Refresh Token **即刻失效**，后续携带该凭证访问任何受限 API 均直接阻断，返回 HTTP 403 Forbidden（业务码 `10002 UserAccountFrozen`）；
+    2. 该账号历史签发的 Token 彻底吊销，即使账号后续解冻，旧 Token 亦永久失效（返回 HTTP 401 Unauthorized），强制用户重新登录获取全新凭证；
+    3. 冻结账号发起任何登录请求（免密登录、密码登录、管理员登录）均直接被拒绝，返回 HTTP 403 Forbidden（业务码 `10002 UserAccountFrozen`）。
 
 ---
 
@@ -201,7 +208,7 @@
       "access_token": "mock_user_token_abc123",
       "refresh_token": "mock_refresh_token_999",
       "role": "user",
-      "expires_in": 7200
+      "expires_in": 120
     },
     "timestamp": 1772607600000
   }
@@ -242,7 +249,7 @@
       "access_token": "EV_TOKEN.10001.user.xxxx",
       "refresh_token": "EV_TOKEN.10001.user.yyyy",
       "role": "user",
-      "expires_in": 7200
+      "expires_in": 120
     },
     "timestamp": 1772607600000
   }
@@ -281,7 +288,7 @@
       "access_token": "EV_TOKEN.10001.user.xxxx",
       "refresh_token": "EV_TOKEN.10001.user.yyyy",
       "role": "user",
-      "expires_in": 7200
+      "expires_in": 120
     },
     "timestamp": 1772607600000
   }
@@ -385,7 +392,7 @@
     "msg": "success",
     "data": {
       "access_token": "mock_user_token_new_refreshed",
-      "expires_in": 7200
+      "expires_in": 120
     },
     "timestamp": 1772607600000
   }
@@ -721,7 +728,7 @@
 - **接口路径**：`GET /api/v1/stations/{station_id}`
 - **认证方式**：公开接口 / `Bearer <token>` 均可
 - **路径参数**：
-  - `station_id` (必填, 整数): 电站唯一 ID (1 ~ 8569)
+  - `station_id` (必填, 整数): 电站唯一 ID (1 ~ 8565)
 - **查询参数 (Query Params)**：
   - `latitude` (可选, 浮点数): 用户当前纬度，用于动态计算用户与该电站的距离 `distance_km`
   - `longitude` (可选, 浮点数): 用户当前经度，用于动态计算用户与该电站的距离 `distance_km`
@@ -1249,7 +1256,7 @@
       "role": "admin",
       "access_token": "mock_admin_token_xyz888",
       "refresh_token": "mock_admin_refresh_999",
-      "expires_in": 7200
+      "expires_in": 120
     },
     "timestamp": 1772607600000
   }
@@ -1416,7 +1423,7 @@
 - **接口路径**：`POST /api/v1/admin/stations/{station_id}/online`
 - **认证方式**：`Bearer <admin_token>`
 - **路径参数**：
-  - `station_id` (必填, 整数): 电站唯一 ID (1 ~ 8569)
+  - `station_id` (必填, 整数): 电站唯一 ID (1 ~ 8565)
 - **业务逻辑**：
   - 将指定的静态电站在线状态原子性置为上线 (`is_online = true`)；
   - 自动将该电站下处于 `OFFLINE` 状态的所有充电桩恢复为 `IDLE` 空闲可用状态；
@@ -1444,7 +1451,7 @@
 - **接口路径**：`POST /api/v1/admin/stations/{station_id}/offline`
 - **认证方式**：`Bearer <admin_token>`
 - **路径参数**：
-  - `station_id` (必填, 整数): 电站唯一 ID (1 ~ 8569)
+  - `station_id` (必填, 整数): 电站唯一 ID (1 ~ 8565)
 - **业务逻辑**：
   - 将指定电站在线状态置为下线 (`is_online = false`)，电站是否下线单独原子存储；
   - **核心保障**：若下线时该电站下属的充电桩有用户正在充电（存在进行中的在途订单），服务端将**同步强制结束该订单**，自动按实际充电度数、时长计算电费与服务费，并**同步发起钱包扣款结算**；
@@ -1626,6 +1633,12 @@
 #### 2. 用户账号冻结 / 解冻 (风控操作)
 - **接口路径**：`PUT /api/v1/admin/users/{user_id}/status`
 - **认证方式**：`Bearer <admin_token>`
+- **业务逻辑**：
+  - 更新目标用户的账号状态（`1`: 正常解冻, `2`: 风控冻结），并同步更新关联钱包账户状态 (`user_wallets.status`)；
+  - **冻结即时失效保障**：当账号被置为 `status = 2` (冻结) 时：
+    1. 对应账号当前所有的 Access Token 与 Refresh Token **立即失效**，任何后续接口请求携带该 Token 均即时阻断，返回 HTTP 403 Forbidden（业务码 `10002 UserAccountFrozen`）；
+    2. 系统在内存中吊销该用户冻结前签发的所有 Token（记录吊销时间戳）。即便未来解除冻结，旧 Token 亦永久失效（返回 HTTP 401 Unauthorized），强制用户必须重新登录；
+    3. 冻结账号发起任何登录请求（快捷免密登录、手机号密码登录、管理员登录）直接被拒绝，返回 HTTP 403 Forbidden（业务码 `10002 UserAccountFrozen`）。
 - **请求参数**：
   - Request Body:
     ```json

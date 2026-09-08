@@ -12,6 +12,7 @@
 #include "memory/station_status_manager.hpp"
 #include "memory/station_price_manager.hpp"
 #include "memory/avatar_manager.hpp"
+#include "common/auth_token.hpp"
 
 #include <QCoreApplication>
 #include <QString>
@@ -107,6 +108,14 @@ int main(int argc, char* argv[]) {
     ev::ChargingStatePool::instance().load_active_reservations_from_db();
     std::println("  [OK] 成功构建 {} 个真实充电站 R-Tree 空间几何索引与 16 个行政区索引", ev::STATIC_STATION_COUNT);
     std::println("  [OK] 成功为全量充电站装载充电桩，恢复活跃预约，状态池初始化就绪");
+
+    // 4.1 恢复冻结用户风控状态与 Token 吊销时间戳
+    std::println(">>> 4.1 正在同步冻结用户风控名单...");
+    auto frozen_res = ev::DbRepository::instance().get_frozen_users_info();
+    if (frozen_res) {
+        ev::AuthTokenManager::init_frozen_users(*frozen_res);
+        std::println("  [OK] 成功同步 {} 个冻结用户至风控鉴权模块", frozen_res->size());
+    }
 
     try {
         // 5. 启动动态充电模拟引擎 (500ms 刷新周期)

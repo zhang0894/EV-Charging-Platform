@@ -39,7 +39,7 @@ server/
 │   ├── charging_controller.hpp         # 充电核心控制器：充电桩预约(20元押金锁定)、取消预约(5元手续费/15元退还)、有效预约单查询、到场扫码充电自动履约全额退还20元押金、启动充电、主动停止、行级排他锁资金结算、订单明细
 │   └── admin_controller.hpp            # 管理员控制器：运营态势大盘看板、营收趋势、电站上线/下线与订单同步结算与充电桩状态保真恢复、电桩新增(POST /piles)、电桩上下线切换(POST /set-status 仅限 OFFLINE/IDLE，电站下线时拒绝修改并返回 20001)、远程重启(电站下线时阻断)、用户风控/调账、全局订单审计、一键退款
 ├── data/                               # 真实北京充电站与初始业务数据资产
-│   ├── beijing_charging_stations.json  # 高德 API 采集的全北京市 8,569 座真实充电站原始数据
+│   ├── beijing_charging_stations.json  # 高德 API 采集的全北京市 8,565 座真实充电站原始数据
 │   ├── stations_processed.json         # 经过 prepare_data.py 清洗与行政区(0~15)紧凑编码后的标准化电站 JSON
 │   ├── static_stations.hpp             # 站点常量装载头文件：静态常量映射与跨编译器适配 (兼容 GCC #embed 与 MSVC 快速只读映射)，提供 O(1) 站点快速检索与不可变保护
 │   ├── seed_piles.json                 # 全量充电桩初始化数据 (按真实电站随机分布 5~30 根)

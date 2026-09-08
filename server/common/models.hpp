@@ -217,7 +217,7 @@ struct AuthResponseData {
     std::string access_token;
     std::string refresh_token;
     std::string role{"user"};
-    int expires_in{7200};
+    int expires_in{120};
 };
 
 struct UserProfileResponseData {

@@ -28,6 +28,7 @@ public:
     Result<std::optional<AvatarModel>> get_user_avatar(int64_t user_id);
     Result<void> clear_user_avatars();
     Result<void> update_user_status(int64_t user_id, int status);
+    Result<std::vector<std::pair<int64_t, int64_t>>> get_frozen_users_info();
     Result<UserAdminListResponseData> get_users_admin_paged(int page, int page_size, std::string_view phone_filter = "", int status_filter = 0);
 
     // ==========================================

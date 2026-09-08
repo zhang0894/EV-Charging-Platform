@@ -49,15 +49,15 @@ public:
         }
 
         auto user = *res;
-        if (user.status == 2) {
+        if (user.status == 2 || AuthTokenManager::is_user_frozen(user.user_id)) {
             return make_error_response(AppError::UserAccountFrozen);
         }
 
         auto wallet = DbRepository::instance().get_wallet(user.user_id);
         int64_t balance_cents = wallet ? wallet->balance_cents : 0;
 
-        std::string access_token = AuthTokenManager::generate_token(user.user_id, user.role, 7200);
-        std::string refresh_token = AuthTokenManager::generate_token(user.user_id, user.role, 86400 * 7);
+        std::string access_token = AuthTokenManager::generate_token(user.user_id, user.role, ACCESS_TOKEN_TTL_SECONDS);
+        std::string refresh_token = AuthTokenManager::generate_token(user.user_id, user.role, REFRESH_TOKEN_TTL_SECONDS);
 
         AuthResponseData resp_data{
             .user_id = user.user_id,
@@ -69,7 +69,7 @@ public:
             .access_token = access_token,
             .refresh_token = refresh_token,
             .role = user.role,
-            .expires_in = 7200
+            .expires_in = ACCESS_TOKEN_TTL_SECONDS
         };
 
         return make_success_response(resp_data);
@@ -97,8 +97,8 @@ public:
         }
 
         auto user = *res;
-        std::string access_token = AuthTokenManager::generate_token(user.user_id, "user", 7200);
-        std::string refresh_token = AuthTokenManager::generate_token(user.user_id, "user", 86400 * 7);
+        std::string access_token = AuthTokenManager::generate_token(user.user_id, "user", ACCESS_TOKEN_TTL_SECONDS);
+        std::string refresh_token = AuthTokenManager::generate_token(user.user_id, "user", REFRESH_TOKEN_TTL_SECONDS);
 
         AuthResponseData resp_data{
             .user_id = user.user_id,
@@ -110,7 +110,7 @@ public:
             .access_token = access_token,
             .refresh_token = refresh_token,
             .role = "user",
-            .expires_in = 7200
+            .expires_in = ACCESS_TOKEN_TTL_SECONDS
         };
 
         return make_success_response(resp_data);
@@ -133,7 +133,7 @@ public:
         }
 
         auto user = *res;
-        if (user.status == 2) {
+        if (user.status == 2 || AuthTokenManager::is_user_frozen(user.user_id)) {
             return make_error_response(AppError::UserAccountFrozen);
         }
 
@@ -144,8 +144,8 @@ public:
         auto wallet = DbRepository::instance().get_wallet(user.user_id);
         int64_t balance_cents = wallet ? wallet->balance_cents : 0;
 
-        std::string access_token = AuthTokenManager::generate_token(user.user_id, user.role, 7200);
-        std::string refresh_token = AuthTokenManager::generate_token(user.user_id, user.role, 86400 * 7);
+        std::string access_token = AuthTokenManager::generate_token(user.user_id, user.role, ACCESS_TOKEN_TTL_SECONDS);
+        std::string refresh_token = AuthTokenManager::generate_token(user.user_id, user.role, REFRESH_TOKEN_TTL_SECONDS);
 
         AuthResponseData resp_data{
             .user_id = user.user_id,
@@ -157,7 +157,7 @@ public:
             .access_token = access_token,
             .refresh_token = refresh_token,
             .role = user.role,
-            .expires_in = 7200
+            .expires_in = ACCESS_TOKEN_TTL_SECONDS
         };
 
         return make_success_response(resp_data);
@@ -175,7 +175,7 @@ public:
             return make_error_response(AppError::UserNotFound, "User not found");
         }
 
-        if (u_res->status == 2) {
+        if (u_res->status == 2 || AuthTokenManager::is_user_frozen(u_res->user_id)) {
             return make_error_response(AppError::UserAccountFrozen);
         }
 
@@ -212,6 +212,9 @@ public:
         }
 
         auto user = *u_res;
+        if (user.status == 2 || AuthTokenManager::is_user_frozen(user.user_id)) {
+            return make_error_response(AppError::UserAccountFrozen);
+        }
         if (user.role != "admin") {
             return make_error_response(AppError::PermissionDenied, "Account is not an administrator");
         }
@@ -220,8 +223,8 @@ public:
             return make_error_response(AppError::InvalidCredentials, "Incorrect admin password");
         }
 
-        std::string access_token = AuthTokenManager::generate_token(user.user_id, "admin", 7200);
-        std::string refresh_token = AuthTokenManager::generate_token(user.user_id, "admin", 86400 * 7);
+        std::string access_token = AuthTokenManager::generate_token(user.user_id, "admin", ACCESS_TOKEN_TTL_SECONDS);
+        std::string refresh_token = AuthTokenManager::generate_token(user.user_id, "admin", REFRESH_TOKEN_TTL_SECONDS);
 
         AuthResponseData resp_data{
             .user_id = user.user_id,
@@ -232,7 +235,7 @@ public:
             .access_token = access_token,
             .refresh_token = refresh_token,
             .role = "admin",
-            .expires_in = 7200
+            .expires_in = ACCESS_TOKEN_TTL_SECONDS
         };
 
         return make_success_response(resp_data);
@@ -250,15 +253,19 @@ public:
             return make_error_response(claims_res.error());
         }
 
-        std::string new_access = AuthTokenManager::generate_token(claims_res->user_id, claims_res->role, 7200);
-        std::string new_refresh = AuthTokenManager::generate_token(claims_res->user_id, claims_res->role, 86400 * 7);
+        if (AuthTokenManager::is_user_frozen(claims_res->user_id)) {
+            return make_error_response(AppError::UserAccountFrozen);
+        }
+
+        std::string new_access = AuthTokenManager::generate_token(claims_res->user_id, claims_res->role, ACCESS_TOKEN_TTL_SECONDS);
+        std::string new_refresh = AuthTokenManager::generate_token(claims_res->user_id, claims_res->role, REFRESH_TOKEN_TTL_SECONDS);
 
         AuthResponseData resp_data{
             .user_id = claims_res->user_id,
             .access_token = new_access,
             .refresh_token = new_refresh,
             .role = claims_res->role,
-            .expires_in = 7200
+            .expires_in = ACCESS_TOKEN_TTL_SECONDS
         };
 
         return make_success_response(resp_data);
