@@ -15,6 +15,9 @@ public:
         return sim;
     }
 
+    // 模拟充电加速倍率（为了现场和前端快速演示，默认加速 60 倍）
+    static constexpr double CHARGING_SPEED_MULTIPLIER = 60.0;
+
     void start(boost::asio::io_context& ioc, int interval_ms = 500);
     void start(int interval_ms = 500);
     void stop();

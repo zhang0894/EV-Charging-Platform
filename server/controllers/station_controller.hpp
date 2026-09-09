@@ -84,72 +84,136 @@ public:
             }
         }
 
-        struct InquireSorterItem {
-            int32_t station_id{0};
-            double distance_km{0.0};
-        };
-
-        std::vector<InquireSorterItem> candidates;
-
         bool has_coords = (lat_opt.has_value() && lon_opt.has_value());
         double user_lat = has_coords ? *lat_opt : 0.0;
         double user_lon = has_coords ? *lon_opt : 0.0;
 
-        auto process_station = [&](int32_t sid, const StaticStation* st) {
-            if (!st) return;
-            if (!name_param.empty() && !fuzzy_contains_icase(st->name, name_param)) {
-                return;
-            }
-            if (status_opt.has_value()) {
-                bool is_on = StationStatusManager::instance().is_online(sid);
-                int s_val = is_on ? 1 : 2;
-                if (*status_opt != s_val) return;
-            }
-            if (fast_pile_opt.has_value()) {
-                bool has_fast = ChargingStatePool::instance().has_fast_pile(sid);
-                if (*fast_pile_opt != has_fast) return;
-            }
-            double dist = 0.0;
-            if (has_coords) {
-                dist = StationRTree::calculate_distance_km(user_lat, user_lon, st->latitude, st->longitude);
-            }
-            candidates.push_back(InquireSorterItem{
-                .station_id = sid,
-                .distance_km = dist
-            });
-        };
+        int64_t start_idx = static_cast<int64_t>(page - 1) * page_size;
+        int64_t end_idx_target = start_idx + page_size;
 
-        if (opt_district_code) {
-            const auto& district_sids = StationRTree::instance().get_district_stations(*opt_district_code);
-            candidates.reserve(district_sids.size());
-            for (int32_t sid : district_sids) {
-                process_station(sid, find_static_station(sid));
+        int64_t total = 0;
+        std::vector<std::pair<int32_t, double>> paged_items; // <station_id, distance_km>
+
+        if (!has_coords) {
+            // 未传经纬度：按 station_id 升序排列
+            // STATIC_STATIONS 本身即按 station_id 严格升序存储，无须全局排序
+            auto filter_and_collect = [&](int32_t sid, const StaticStation* st) {
+                if (!st) return;
+                if (!name_param.empty() && !fuzzy_contains_icase(st->name, name_param)) return;
+                if (status_opt.has_value()) {
+                    bool is_on = StationStatusManager::instance().is_online(sid);
+                    if (*status_opt != (is_on ? 1 : 2)) return;
+                }
+                if (fast_pile_opt.has_value()) {
+                    if (*fast_pile_opt != ChargingStatePool::instance().has_fast_pile(sid)) return;
+                }
+                if (total >= start_idx && total < end_idx_target) {
+                    paged_items.emplace_back(sid, 0.0);
+                }
+                total++;
+            };
+
+            if (opt_district_code) {
+                const auto& district_sids = StationRTree::instance().get_district_stations(*opt_district_code);
+                for (int32_t sid : district_sids) {
+                    filter_and_collect(sid, find_static_station(sid));
+                }
+            } else {
+                for (const auto& s : STATIC_STATIONS) {
+                    filter_and_collect(s.station_id, &s);
+                }
             }
         } else {
-            candidates.reserve(STATIC_STATION_COUNT);
-            for (const auto& s : STATIC_STATIONS) {
-                process_station(s.station_id, &s);
-            }
-        }
+            // 提供经纬度：按距离由近及远升序排序
+            // 采用局部等距平面投影平方距离 (Equirectangular Distance Squared) 进行粗排
+            // 欧氏平方距离 d2 与球面大圆距离在区域范围内严格保序单调，仅含乘加运算，效率极高
+            constexpr double DEG_TO_RAD = 3.14159265358979323846 / 180.0;
+            double kx = std::cos(user_lat * DEG_TO_RAD);
 
-        // 排序规则:
-        // 1. 若提供经纬度，按距离由近及远升序排序 (不要求严格排序，距离近的靠前)
-        // 2. 若未提供经纬度，按照 station_id 升序排列
-        if (has_coords) {
-            std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) {
+            struct HeapItem {
+                int32_t station_id;
+                double dist_sq;
+                bool operator<(const HeapItem& o) const noexcept {
+                    if (dist_sq != o.dist_sq) return dist_sq < o.dist_sq; // 大顶堆，最远的排在堆顶
+                    return station_id < o.station_id;
+                }
+            };
+
+            // 安全候选集大小 K: 取 end_idx_target + 8，确保与球面大圆距离在临界边界上 100% 严格一致
+            size_t K = static_cast<size_t>(end_idx_target + 8);
+            std::vector<HeapItem> max_heap;
+            max_heap.reserve(std::min<size_t>(K, 256));
+            double max_dist_sq = std::numeric_limits<double>::infinity();
+
+            auto filter_and_feed = [&](int32_t sid, const StaticStation* st) {
+                if (!st) return;
+                if (!name_param.empty() && !fuzzy_contains_icase(st->name, name_param)) return;
+                if (status_opt.has_value()) {
+                    bool is_on = StationStatusManager::instance().is_online(sid);
+                    if (*status_opt != (is_on ? 1 : 2)) return;
+                }
+                if (fast_pile_opt.has_value()) {
+                    if (*fast_pile_opt != ChargingStatePool::instance().has_fast_pile(sid)) return;
+                }
+                total++;
+
+                double dx = (st->longitude - user_lon) * kx;
+                double dy = st->latitude - user_lat;
+                double d2 = dx * dx + dy * dy;
+
+                if (max_heap.size() < K) {
+                    max_heap.push_back(HeapItem{sid, d2});
+                    if (max_heap.size() == K) {
+                        std::make_heap(max_heap.begin(), max_heap.end());
+                        max_dist_sq = max_heap.front().dist_sq;
+                    }
+                } else if (d2 < max_dist_sq) {
+                    std::pop_heap(max_heap.begin(), max_heap.end());
+                    max_heap.back() = HeapItem{sid, d2};
+                    std::push_heap(max_heap.begin(), max_heap.end());
+                    max_dist_sq = max_heap.front().dist_sq;
+                }
+            };
+
+            if (opt_district_code) {
+                const auto& district_sids = StationRTree::instance().get_district_stations(*opt_district_code);
+                for (int32_t sid : district_sids) {
+                    filter_and_feed(sid, find_static_station(sid));
+                }
+            } else {
+                for (const auto& s : STATIC_STATIONS) {
+                    filter_and_feed(s.station_id, &s);
+                }
+            }
+
+            // 对堆中筛选出的候选站点计算精确的 Haversine 球面大圆距离，完成最终严格排序
+            struct SorterItem {
+                int32_t station_id;
+                double distance_km;
+            };
+            std::vector<SorterItem> top_candidates;
+            top_candidates.reserve(max_heap.size());
+            for (const auto& h : max_heap) {
+                const StaticStation* s = find_static_station(h.station_id);
+                if (!s) continue;
+                double dist = StationRTree::calculate_distance_km(user_lat, user_lon, s->latitude, s->longitude);
+                top_candidates.push_back(SorterItem{h.station_id, dist});
+            }
+
+            std::sort(top_candidates.begin(), top_candidates.end(), [](const auto& a, const auto& b) {
                 if (std::abs(a.distance_km - b.distance_km) > 1e-6) {
                     return a.distance_km < b.distance_km;
                 }
                 return a.station_id < b.station_id;
             });
-        } else {
-            std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) {
-                return a.station_id < b.station_id;
-            });
-        }
 
-        int64_t total = candidates.size();
-        int64_t start_idx = static_cast<int64_t>(page - 1) * page_size;
+            if (start_idx < static_cast<int64_t>(top_candidates.size())) {
+                int64_t end_idx = std::min(end_idx_target, static_cast<int64_t>(top_candidates.size()));
+                for (int64_t i = start_idx; i < end_idx; ++i) {
+                    paged_items.emplace_back(top_candidates[i].station_id, top_candidates[i].distance_km);
+                }
+            }
+        }
 
         StationInquireResponseData resp{
             .total = total,
@@ -158,42 +222,36 @@ public:
             .stations = {}
         };
 
-        if (start_idx < total) {
-            int64_t end_idx = std::min(start_idx + page_size, total);
-            resp.stations.reserve(end_idx - start_idx);
+        resp.stations.reserve(paged_items.size());
+        for (const auto& [sid, dist] : paged_items) {
+            const StaticStation* s = find_static_station(sid);
+            if (!s) continue;
 
-            for (int64_t i = start_idx; i < end_idx; ++i) {
-                int32_t sid = candidates[i].station_id;
-                double dist = candidates[i].distance_km;
-                const StaticStation* s = find_static_station(sid);
-                if (!s) continue;
+            auto summary = ChargingStatePool::instance().get_station_pile_summary(sid);
+            bool is_on = StationStatusManager::instance().is_online(sid);
 
-                auto summary = ChargingStatePool::instance().get_station_pile_summary(sid);
-                bool is_on = StationStatusManager::instance().is_online(sid);
-
-                resp.stations.push_back(StationNearbyCardDTO{
-                    .station_id = sid,
-                    .id = sid,
-                    .station_name = std::string(s->name),
-                    .district = std::string(get_district_name_by_code(s->district_code)),
-                    .district_code = s->district_code,
-                    .address = std::string(s->address),
-                    .latitude = s->latitude,
-                    .longitude = s->longitude,
-                    .distance_km = has_coords ? (std::round(dist * 100.0) / 100.0) : 0.0,
-                    .price_per_kwh = StationPriceManager::instance().get_price(sid),
-                    .service_fee_per_kwh = 0.35,
-                    .overtime_fee_per_15min = 5.00,
-                    .total_piles = summary.total_piles,
-                    .pile_count = summary.total_piles,
-                    .idle_piles = summary.idle_piles,
-                    .available_count = summary.idle_piles,
-                    .fast_piles_idle = summary.fast_piles_idle,
-                    .slow_piles_idle = summary.slow_piles_idle,
-                    .has_fast_pile = summary.has_fast_pile,
-                    .is_online = is_on
-                });
-            }
+            resp.stations.push_back(StationNearbyCardDTO{
+                .station_id = sid,
+                .id = sid,
+                .station_name = std::string(s->name),
+                .district = std::string(get_district_name_by_code(s->district_code)),
+                .district_code = s->district_code,
+                .address = std::string(s->address),
+                .latitude = s->latitude,
+                .longitude = s->longitude,
+                .distance_km = has_coords ? (std::round(dist * 100.0) / 100.0) : 0.0,
+                .price_per_kwh = StationPriceManager::instance().get_price(sid),
+                .service_fee_per_kwh = 0.35,
+                .overtime_fee_per_15min = 5.00,
+                .total_piles = summary.total_piles,
+                .pile_count = summary.total_piles,
+                .idle_piles = summary.idle_piles,
+                .available_count = summary.idle_piles,
+                .fast_piles_idle = summary.fast_piles_idle,
+                .slow_piles_idle = summary.slow_piles_idle,
+                .has_fast_pile = summary.has_fast_pile,
+                .is_online = is_on
+            });
         }
 
         return make_success_response(resp);

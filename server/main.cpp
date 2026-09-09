@@ -39,7 +39,13 @@ int main(int argc, char* argv[]) {
 
     // 1. 初始化数据库读写分离连接池
     std::println(">>> 1. 正在初始化 PostgreSQL 读写分离数据库连接池 (主库写池与只读副本读池)...");
+#if defined(_WIN32) || defined(_WIN64)
+    constexpr size_t WIN_MIN_CONN = 16;
+    constexpr size_t WIN_MAX_CONN = 48;
+    ev::DbPool::instance().init(db_conninfo, db_read_conninfo, WIN_MIN_CONN, WIN_MAX_CONN);
+#else
     ev::DbPool::instance().init(db_conninfo, db_read_conninfo, 8, 32);
+#endif
     if (!ev::DbPool::instance().is_initialized()) {
         std::cerr << ">>> [FATAL] 数据库连接失败，服务端终止启动。请检查 PostgreSQL 服务是否已启动并验证连接配置。\n" << std::flush;
         return 1;
@@ -64,6 +70,10 @@ int main(int argc, char* argv[]) {
         std::string_view arg = argv[i];
         if (arg == "--reset" || arg == "--reseed") {
             do_reset_and_import = true;
+            skip_prompt = true;
+            break;
+        } else if (arg == "--no-prompt" || arg == "--keep") {
+            do_reset_and_import = false;
             skip_prompt = true;
             break;
         }
@@ -165,7 +175,12 @@ int main(int argc, char* argv[]) {
 
         // 6. 绑定并监听 HTTP / WebSocket 端口 8080 (Qt 现代多线程网络引擎)
         ev::QtHttpServer server;
+#if defined(_WIN32) || defined(_WIN64)
+        constexpr int WIN_SERVER_WORKERS = 12;
+        if (!server.start(QString::fromStdString(host), port, WIN_SERVER_WORKERS)) {
+#else
         if (!server.start(QString::fromStdString(host), port)) {
+#endif
             std::cerr << ">>> [FATAL] Qt 网络服务器启动失败，服务端终止启动。\n" << std::flush;
             return 1;
         }
