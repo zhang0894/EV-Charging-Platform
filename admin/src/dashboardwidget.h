@@ -5,7 +5,7 @@
 // Qt 6 中 QtCharts 类位于全局命名空间，无需 QT_CHARTS_USE_NAMESPACE 宏（该宏已被移除）。
 // 直接包含具体头文件即可使用 QChart / QLineSeries / QDateTimeAxis / QValueAxis。
 #include <QtCharts/QChart>
-#include <QtCharts/QLineSeries>
+#include <QtCharts/QSplineSeries>
 #include <QtCharts/QDateTimeAxis>
 #include <QtCharts/QValueAxis>
 
@@ -47,7 +47,7 @@ private:
 
     // 折线图组件
     QChart        *m_chart;
-    QLineSeries   *m_series;    // 营收折线
+    QSplineSeries *m_series;    // 营收平滑曲线
     QDateTimeAxis *m_axisX;     // 日期轴
     QValueAxis    *m_axisY;     // 营收轴
 };
