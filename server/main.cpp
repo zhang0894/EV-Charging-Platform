@@ -40,13 +40,9 @@ int main(int argc, char* argv[]) {
 
     // 1. 初始化数据库读写分离连接池
     std::println(">>> 1. 正在初始化 PostgreSQL 读写分离数据库连接池 (主库写池与只读副本读池)...");
-#if defined(_WIN32) || defined(_WIN64)
-    constexpr size_t WIN_MIN_CONN = 16;
-    constexpr size_t WIN_MAX_CONN = 48;
-    ev::DbPool::instance().init(db_conninfo, db_read_conninfo, WIN_MIN_CONN, WIN_MAX_CONN);
-#else
-    ev::DbPool::instance().init(db_conninfo, db_read_conninfo, 8, 32);
-#endif
+    constexpr size_t DEFAULT_MIN_CONN = 16;
+    constexpr size_t DEFAULT_MAX_CONN = 48;
+    ev::DbPool::instance().init(db_conninfo, db_read_conninfo, DEFAULT_MIN_CONN, DEFAULT_MAX_CONN);
     if (!ev::DbPool::instance().is_initialized()) {
         std::cerr << ">>> [FATAL] 数据库连接失败，服务端终止启动。请检查 PostgreSQL 服务是否已启动并验证连接配置。\n" << std::flush;
         return 1;
@@ -63,15 +59,14 @@ int main(int argc, char* argv[]) {
     std::println(">>> 2. 正在初始化 Redis 实时/TTL 缓存组件...");
     ev::RedisCache::instance().init("127.0.0.1", 6379);
 
-    // 3. 询问是否需要清空数据库并重新导入数据? (y/N)
+    // 3. 询问是否需要清空数据库并重新导入数据? (y/N) 与 是否开启请求日志展示模式? (y/N)
     bool skip_prompt = false;
     bool do_reset_and_import = false;
+    bool enable_demo_logging = false;
+    bool skip_demo_prompt = false;
 
-    int reactor_threads = 0;
-    int business_threads = 24;
-#if defined(_WIN32) || defined(_WIN64)
-    reactor_threads = 12;
-#endif
+    int reactor_threads = 8;
+    int business_threads = 16;
 
     for (int i = 1; i < argc; ++i) {
         std::string_view arg = argv[i];
@@ -81,6 +76,13 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--no-prompt" || arg == "--keep") {
             do_reset_and_import = false;
             skip_prompt = true;
+            skip_demo_prompt = true;
+        } else if (arg == "--demo" || arg == "--verbose" || arg == "--show-requests") {
+            enable_demo_logging = true;
+            skip_demo_prompt = true;
+        } else if (arg == "--no-demo" || arg == "--quiet") {
+            enable_demo_logging = false;
+            skip_demo_prompt = true;
         } else if ((arg == "--reactor-threads" || arg == "--reactors") && i + 1 < argc) {
             reactor_threads = std::max(1, std::stoi(argv[++i]));
         } else if ((arg == "--business-threads" || arg == "--business" || arg == "--workers") && i + 1 < argc) {
@@ -100,6 +102,17 @@ int main(int argc, char* argv[]) {
             while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.remove_suffix(1);
             if (s == "1" || s == "true" || s == "TRUE" || s == "yes" || s == "YES") {
                 skip_prompt = true;
+                skip_demo_prompt = true;
+            }
+        }
+    }
+
+    if (!skip_demo_prompt) {
+        if (const char* env_demo = std::getenv("DEMO_LOGGING")) {
+            std::string_view s(env_demo);
+            if (s == "1" || s == "true" || s == "TRUE" || s == "yes" || s == "YES") {
+                enable_demo_logging = true;
+                skip_demo_prompt = true;
             }
         }
     }
@@ -119,6 +132,25 @@ int main(int argc, char* argv[]) {
         std::println(">>> [NO_PROMPT] 自动化/非交互模式，保持现有数据库内容不变。");
     }
 
+    if (!skip_demo_prompt) {
+        std::cout << "是否开启请求收发概要日志展示模式? (y/N): " << std::flush;
+        std::string demo_choice;
+        if (std::getline(std::cin, demo_choice)) {
+            while (!demo_choice.empty() && std::isspace(static_cast<unsigned char>(demo_choice.front()))) demo_choice.erase(demo_choice.begin());
+            while (!demo_choice.empty() && std::isspace(static_cast<unsigned char>(demo_choice.back()))) demo_choice.pop_back();
+
+            if (demo_choice == "y" || demo_choice == "Y" || demo_choice == "yes" || demo_choice == "YES") {
+                enable_demo_logging = true;
+            }
+        }
+    }
+
+    if (enable_demo_logging) {
+        std::println(">>> [DEMO MODE] 已开启网络请求收发概要日志展示功能 (模板特化驱动，生产/压测关闭时0开销)。");
+    } else {
+        std::println(">>> [NORMAL MODE] 网络请求收发概要日志展示已关闭 (0 开销基准模式)。");
+    }
+
     if (do_reset_and_import) {
         std::println(">>> 正在清空数据库所有业务表与 Redis 缓存...");
         ev::SeedDataGenerator::clear_database();
@@ -131,8 +163,6 @@ int main(int argc, char* argv[]) {
         std::println(">>> 保持现有数据库内容不变，直接启动服务。\n");
         // 保险检查：若数据库完全没有任何数据（首次启动），自动导入
         ev::SeedDataGenerator::populate_if_empty("data");
-        // 若数据库已有数据，检查并模拟补齐可能存在的跨天订单
-        ev::DbRepository::instance().check_and_simulate_daily_orders();
     }
 
     // 4. 构建真实电站常量 R-Tree 空间索引与电桩状态内存池
@@ -177,6 +207,9 @@ int main(int argc, char* argv[]) {
         std::println("  [OK] 成功同步 {} 个冻结用户至风控鉴权模块", frozen_res->size());
     }
 
+    // 4.2 检查并模拟补齐可能存在的跨天历史订单 (依赖已初始化的电站空间状态与电桩内存池)
+    ev::DbRepository::instance().check_and_simulate_daily_orders();
+
     try {
         // 5. 启动动态充电模拟引擎 (500ms 刷新周期)
         std::println(">>> 5. 启动充电桩动态模拟与占位费引擎 (500ms 刷新周期)...");
@@ -188,7 +221,7 @@ int main(int argc, char* argv[]) {
 
         // 6. 绑定并监听 HTTP / WebSocket 端口 8080 (Qt 现代多线程网络引擎)
         ev::QtHttpServer server;
-        if (!server.start(QString::fromStdString(host), port, reactor_threads)) {
+        if (!server.start(QString::fromStdString(host), port, reactor_threads, enable_demo_logging)) {
             std::cerr << ">>> [FATAL] Qt 网络服务器启动失败，服务端终止启动。\n" << std::flush;
             return 1;
         }

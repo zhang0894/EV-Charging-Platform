@@ -156,7 +156,10 @@ if (WIN32)
         if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
             target_compile_options(server PRIVATE
                 -Wa,-mbig-obj
-                -O2
+                -O3
+                -mavx2
+                -mfma
+                -ffast-math
             )
         endif()
 
@@ -175,10 +178,20 @@ if (WIN32)
 else()
     message(STATUS "Configuring for Linux / Unix platform...")
 
-    target_compile_options(server PRIVATE
-        -O2
-        -pthread
-    )
+    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(server PRIVATE
+            -O3
+            -mavx2
+            -mfma
+            -ffast-math
+            -pthread
+        )
+    else()
+        target_compile_options(server PRIVATE
+            -O3
+            -pthread
+        )
+    endif()
 
     find_package(PostgreSQL REQUIRED)
     if (TARGET PostgreSQL::PostgreSQL)
@@ -248,7 +261,10 @@ if (ENABLE_BENCHMARK)
             if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
                 target_compile_options(stress_client PRIVATE
                     -Wa,-mbig-obj
-                    -O2
+                    -O3
+                    -mavx2
+                    -mfma
+                    -ffast-math
                 )
             endif()
             target_link_libraries(stress_client PRIVATE
@@ -260,10 +276,20 @@ if (ENABLE_BENCHMARK)
             )
         endif()
     else()
-        target_compile_options(stress_client PRIVATE
-            -O2
-            -pthread
-        )
+        if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(stress_client PRIVATE
+                -O3
+                -mavx2
+                -mfma
+                -ffast-math
+                -pthread
+            )
+        else()
+            target_compile_options(stress_client PRIVATE
+                -O3
+                -pthread
+            )
+        endif()
         target_link_libraries(stress_client PRIVATE
             Threads::Threads
         )

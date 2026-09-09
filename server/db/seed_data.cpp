@@ -299,6 +299,7 @@ bool SeedDataGenerator::import_from_json(const std::string& data_dir) {
     for (int d = 29; d >= 0; --d) {
         int64_t day_idx = current_day - d;
         int64_t day_start_ms = day_idx * 86400000LL - cst_offset;
+        int64_t day_end_ms = day_start_ms + 86400000LL - 1LL;
 
         for (const auto& s : stations) {
             if (!s.is_online) continue; // 下线/暂停营业电站不生成订单
@@ -333,11 +334,8 @@ bool SeedDataGenerator::import_from_json(const std::string& data_dir) {
                 int minute = static_cast<int>((ord_seed / 24) % 60);
                 int second = static_cast<int>((ord_seed / 1440) % 60);
                 int64_t start_time = day_start_ms + (hour * 3600LL + minute * 60LL + second) * 1000LL;
-                if (start_time > now) start_time = now - 1800000LL;
-
                 int dur_mins = is_fast ? (30 + static_cast<int>(ord_seed % 45)) : (120 + static_cast<int>(ord_seed % 240));
-                int64_t end_time = start_time + dur_mins * 60 * 1000LL;
-                if (end_time > now) end_time = now;
+                int64_t end_time = std::min(day_end_ms, start_time + dur_mins * 60 * 1000LL);
 
                 int start_soc = 15 + static_cast<int>(ord_seed % 25);
                 int end_soc = 85 + static_cast<int>(ord_seed % 15);

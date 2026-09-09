@@ -16,18 +16,14 @@ namespace ev {
 namespace beast = boost::beast;
 namespace http = beast::http;
 
+template <bool EnableLogging = false>
 class QtHttpSession : public QObject {
-    Q_OBJECT
-
 public:
     explicit QtHttpSession(qintptr socketDescriptor, QObject* parent = nullptr);
     ~QtHttpSession() override;
 
-private slots:
     void onReadyRead();
     void onDisconnected();
-
-public slots:
     void on_async_response_ready(std::string res_bytes, bool keep_alive);
 
 private:

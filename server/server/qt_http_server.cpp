@@ -14,8 +14,9 @@ QtHttpServer::~QtHttpServer() {
     stop();
 }
 
-bool QtHttpServer::start(const QString& address, quint16 port, int thread_count) {
+bool QtHttpServer::start(const QString& address, quint16 port, int thread_count, bool enable_demo_logging) {
     if (is_running_) return true;
+    enable_demo_logging_ = enable_demo_logging;
 
     // 确定工作线程数 (默认 hardware_concurrency，至少 2 线程)
     int concurrency = (thread_count <= 0)
@@ -66,7 +67,11 @@ void QtHttpServer::stop() {
 void QtHttpServer::incomingConnection(qintptr socketDescriptor) {
     if (workers_.empty()) {
         // 单线程回退模式
-        new QtHttpSession(socketDescriptor, this);
+        if (enable_demo_logging_) {
+            new QtHttpSession<true>(socketDescriptor, this);
+        } else {
+            new QtHttpSession<false>(socketDescriptor, this);
+        }
         return;
     }
 
@@ -74,9 +79,15 @@ void QtHttpServer::incomingConnection(qintptr socketDescriptor) {
     size_t idx = next_worker_index_.fetch_add(1, std::memory_order_relaxed) % workers_.size();
     auto& target_worker = workers_[idx];
 
-    QMetaObject::invokeMethod(target_worker.context, [socketDescriptor, ctx = target_worker.context]() {
-        new QtHttpSession(socketDescriptor, ctx);
-    }, Qt::QueuedConnection);
+    if (enable_demo_logging_) {
+        QMetaObject::invokeMethod(target_worker.context, [socketDescriptor, ctx = target_worker.context]() {
+            new QtHttpSession<true>(socketDescriptor, ctx);
+        }, Qt::QueuedConnection);
+    } else {
+        QMetaObject::invokeMethod(target_worker.context, [socketDescriptor, ctx = target_worker.context]() {
+            new QtHttpSession<false>(socketDescriptor, ctx);
+        }, Qt::QueuedConnection);
+    }
 }
 
 } // namespace ev

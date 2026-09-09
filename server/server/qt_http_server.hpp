@@ -17,7 +17,7 @@ public:
     ~QtHttpServer() override;
 
     // 启动监听与多线程 Worker 架构
-    bool start(const QString& address, quint16 port, int thread_count = 0);
+    bool start(const QString& address, quint16 port, int thread_count = 0, bool enable_demo_logging = false);
     void stop();
 
 protected:
@@ -32,6 +32,7 @@ private:
     std::vector<WorkerNode> workers_;
     std::atomic<size_t> next_worker_index_{0};
     bool is_running_{false};
+    bool enable_demo_logging_{false};
 };
 
 } // namespace ev
