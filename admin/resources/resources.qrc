@@ -10,5 +10,10 @@
         <file>img/user-manage.svg</file>
         <file>img/order-manage.svg</file>
         <file>img/app-logo.svg</file>
+        <file>img/user.svg</file>
+        <file>img/lock.svg</file>
+        <file>img/eye.svg</file>
+        <file>img/eye-off.svg</file>
+        <file>img/check.svg</file>
     </qresource>
 </RCC>
