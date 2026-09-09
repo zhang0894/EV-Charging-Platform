@@ -19,14 +19,17 @@ int main(int argc, char *argv[])
     a.setApplicationVersion(QStringLiteral("1.0.0"));
 
     // 加载科技感 QSS 样式表（从 qrc 资源读取，路径对应 resources.qrc 中的 :/style.qss）
-    QFile qssFile(QStringLiteral(":/style.qss"));
-    if (qssFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QTextStream ts(&qssFile);
-        ts.setEncoding(QStringConverter::Utf8);
-        const QString style = ts.readAll();
-        qApp->setStyleSheet(style);
-        qssFile.close();
-    }
+    // 封装为函数：退出登录回到登录页前需重新应用，保证登录页始终为白天浅色模式
+    auto applyLightStyle = []() {
+        QFile qssFile(QStringLiteral(":/style.qss"));
+        if (qssFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QTextStream ts(&qssFile);
+            ts.setEncoding(QStringConverter::Utf8);
+            qApp->setStyleSheet(ts.readAll());
+            qssFile.close();
+        }
+    };
+    applyLightStyle();
 
     // Token 自动刷新失败时弹出提示并重新登录
     QObject::connect(TokenManager::instance(), &TokenManager::refreshFailed,
@@ -65,6 +68,8 @@ int main(int argc, char *argv[])
             // 用户关闭主窗口（非退出登录），结束程序
             return 0;
         }
-        // logoutRequested == true：继续循环，重新弹出登录框
+        // logoutRequested == true：继续循环，重新弹出登录框。
+        // 先恢复白天浅色全局样式，避免夜晚模式下退出登录后登录页残留深色样式
+        applyLightStyle();
     }
 }

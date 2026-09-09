@@ -267,7 +267,7 @@ void DashboardWidget::refreshChart()
     m_series->replace(points);
     m_axisX->setRange(firstDt, lastDt);
     // 纵轴自适应：上界 maxRev*1.15 留出顶部空间，下界 minRev*0.85 放大数据变化趋势
-    m_axisY->setRange(minRev * 0.85, maxRev * 1.15) ;
+    m_axisY->setRange(minRev * 0.98, maxRev * 1.02) ;
 }
 
 // ------------- 按钮槽：切换数据集 -------------
