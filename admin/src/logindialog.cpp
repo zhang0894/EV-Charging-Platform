@@ -49,6 +49,11 @@ LoginDialog::LoginDialog(QWidget *parent)
     loadRemembered();
 }
 
+QString LoginDialog::account() const
+{
+    return m_accountEdit ? m_accountEdit->text() : QString();
+}
+
 void LoginDialog::buildUi()
 {
     // ===== 根布局：左右分栏 =====

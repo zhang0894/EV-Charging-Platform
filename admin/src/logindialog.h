@@ -38,6 +38,8 @@ public:
     QString token() const { return m_token; }
     /** 登录成功后获取 refresh_token */
     QString refreshToken() const { return m_refreshToken; }
+    /** 获取登录时输入的管理员账号 */
+    QString account() const;
 
 private slots:
     void onLoginClicked();

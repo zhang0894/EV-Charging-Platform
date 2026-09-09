@@ -20,8 +20,11 @@
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QJsonDocument>
+#include <QStyledItemDelegate>
+#include <QPainter>
+#include <QAction>
 
-// 表格内操作按钮样式（详情=蓝 / 上线=绿 / 下线=橙），与轻量专业风主题一致
+// 操作列按钮样式（详情=蓝 / 上线=绿 / 下线=橙），与轻量专业风主题一致
 static const QString kDetailBtnStyle = QStringLiteral(
     "QPushButton{background-color:#e8f0fe;color:#1a5cff;"
     "border:1px solid #c0d6ff;border-radius:4px;padding:3px 10px;min-width:44px;}"
@@ -36,6 +39,76 @@ static const QString kOfflineBtnStyle = QStringLiteral(
     "QPushButton{background-color:#fef3e2;color:#d97706;"
     "border:1px solid #f8dfb0;border-radius:4px;padding:3px 10px;min-width:44px;}"
     "QPushButton:hover{background-color:#fce8c7;color:#b45309;border-color:#f59e0b;}");
+
+// ------------- 可用率列：数字 + 迷你进度条 自绘代理 -------------
+class OnlineRateDelegate : public QStyledItemDelegate
+{
+public:
+    explicit OnlineRateDelegate(QObject *parent = nullptr)
+        : QStyledItemDelegate(parent) {}
+
+    void setDark(bool dark) { m_dark = dark; }
+
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override
+    {
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing);
+
+        // 行背景（选中态高亮）
+        if (option.state & QStyle::State_Selected) {
+            painter->fillRect(option.rect, m_dark ? QColor(0x1e, 0x3a, 0x5f)
+                                                   : QColor(0xe8, 0xf0, 0xfe));
+        }
+
+        // 百分比文字（居中偏上）：深色模式用白字
+        const QString text = index.data(Qt::DisplayRole).toString();
+        const bool selected = option.state & QStyle::State_Selected;
+        if (selected) {
+            painter->setPen(QColor(0x4d, 0x9b, 0xff));
+        } else {
+            painter->setPen(m_dark ? QColor(0xe8, 0xec, 0xf0) : QColor(0x1a, 0x23, 0x32));
+        }
+        QFont f = option.font;
+        f.setPointSize(13);
+        painter->setFont(f);
+        const QRect textRect = option.rect.adjusted(0, 6, 0, -12);
+        painter->drawText(textRect, Qt::AlignCenter, text);
+
+        // 迷你进度条（底部）
+        const double rate = index.data(StationManagementModel::OnlineRateRole).toDouble();
+        const int barHeight = 4;
+        const int barY = option.rect.bottom() - barHeight - 5;
+        const int barMargin = 10;
+        const int barWidth = option.rect.width() - barMargin * 2;
+        const int barX = option.rect.left() + barMargin;
+
+        // 可用率分级配色：>=70% 绿 / 40~70% 橙 / <40% 红
+        QColor fillColor;
+        if (rate >= 70.0) {
+            fillColor = QColor(0x52, 0xc4, 0x1a);   // 绿：可用率良好
+        } else if (rate >= 40.0) {
+            fillColor = QColor(0xfa, 0xad, 0x14);   // 橙：可用率偏低
+        } else {
+            fillColor = QColor(0xef, 0x44, 0x44);   // 红：可用率差
+        }
+
+        // 轨道：深色模式用深灰轨道
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(m_dark ? QColor(0x3a, 0x40, 0x50) : QColor(0xe8, 0xec, 0xf0));
+        painter->drawRoundedRect(barX, barY, barWidth, barHeight, 2, 2);
+        // 填充
+        const int fillWidth = qMax(0, qMin(barWidth,
+            static_cast<int>(barWidth * rate / 100.0)));
+        painter->setBrush(fillColor);
+        painter->drawRoundedRect(barX, barY, fillWidth, barHeight, 2, 2);
+
+        painter->restore();
+    }
+
+private:
+    bool m_dark = false;
+};
 
 StationManagementWidget::StationManagementWidget(QWidget *parent)
     : QWidget(parent)
@@ -104,33 +177,40 @@ void StationManagementWidget::buildUi()
     setObjectName(QStringLiteral("stationManagementPage"));
 
     setStyleSheet(QStringLiteral(
-        /* 顶部工具栏容器：白底浅边框 */
+        /* 顶部工具栏容器：白底卡片 + 内边距 */
         "QFrame#stationToolbar{background-color:#ffffff;border:1px solid #e8ecf0;border-radius:8px;}"
-        /* 搜索框 */
+        /* 搜索框：前置放大镜图标，聚焦蓝色边框 */
         "QLineEdit#stationSearchEdit{background-color:#ffffff;color:#1a2332;"
-        "border:1px solid #d9dee5;border-radius:6px;padding:6px 10px;}"
+        "border:1px solid #d9dee5;border-radius:6px;padding:6px 10px 6px 32px;min-height:22px;}"
         "QLineEdit#stationSearchEdit:focus{border:1px solid #2b7bff;}"
         /* 状态筛选下拉框 */
         "QComboBox#stationStatusCombo{background-color:#ffffff;color:#1a2332;"
-        "border:1px solid #d9dee5;border-radius:6px;padding:6px 12px;}"
+        "border:1px solid #d9dee5;border-radius:6px;padding:6px 12px;min-height:22px;}"
         "QComboBox#stationStatusCombo:hover{border:1px solid #2b7bff;}"
         "QComboBox#stationStatusCombo QAbstractItemView{background-color:#ffffff;"
         "color:#1a2332;selection-background-color:#e8f0fe;selection-color:#1a5cff;}"
-        /* 查询/刷新按钮：白底浅描边，hover 蓝色 */
-        "QPushButton#btnStationQuery,QPushButton#btnStationRefresh{background-color:#ffffff;"
-        "color:#1a2332;border:1px solid #d9dee5;border-radius:6px;padding:6px 18px;min-width:72px;}"
-        "QPushButton#btnStationQuery:hover,QPushButton#btnStationRefresh:hover{border:1px solid #2b7bff;color:#2b7bff;}"
-        /* 新增电站按钮：蓝色填充主操作 */
-        "QPushButton#btnStationAdd{background-color:#2b7bff;color:#ffffff;"
-        "border:1px solid #2b7bff;border-radius:6px;padding:6px 18px;min-width:88px;font-weight:600;}"
-        "QPushButton#btnStationAdd:hover{background-color:#1a5cff;border-color:#1a5cff;}"
-        /* 表格：极简浅色 */
-        "QTableView#stationTable{background-color:#ffffff;alternate-background-color:#f8fafc;"
+        /* 查询按钮：主题色实心（主操作） */
+        "QPushButton#btnStationQuery{background-color:#2b7bff;color:#ffffff;"
+        "border:1px solid #2b7bff;border-radius:6px;padding:6px 18px;min-width:72px;font-weight:600;}"
+        "QPushButton#btnStationQuery:hover{background-color:#1a5cff;border-color:#1a5cff;}"
+        /* 刷新按钮：描边样式（次要操作） */
+        "QPushButton#btnStationRefresh{background-color:#ffffff;color:#4a5a6e;"
+        "border:1px solid #d9dee5;border-radius:6px;padding:6px 18px;min-width:72px;}"
+        "QPushButton#btnStationRefresh:hover{border:1px solid #2b7bff;color:#2b7bff;}"
+        /* 新增电站按钮：绿色实心（区分主次） */
+        "QPushButton#btnStationAdd{background-color:#52c41a;color:#ffffff;"
+        "border:1px solid #52c41a;border-radius:6px;padding:6px 18px;min-width:88px;font-weight:600;}"
+        "QPushButton#btnStationAdd:hover{background-color:#389e0d;border-color:#389e0d;}"
+        /* 表格：斑马纹 + hover 浅蓝 */
+        "QTableView#stationTable{background-color:#ffffff;alternate-background-color:#fafbfc;"
         "color:#1a2332;gridline-color:#eef1f5;border:1px solid #e8ecf0;border-radius:8px;"
-        "selection-background-color:#e8f0fe;selection-color:#1a5cff;}"
-        "QTableView#stationTable QHeaderView::section{background-color:#f8fafc;color:#4a5a6e;"
-        "border:none;border-bottom:1px solid #e8ecf0;padding:8px;font-weight:600;}"
-        "QTableView#stationTable QTableCornerButton::section{background-color:#f8fafc;border:none;}"
+        "selection-background-color:#e8f0fe;selection-color:#1a5cff;outline:none;}"
+        "QTableView#stationTable::item:hover{background-color:#eef5ff;}"
+        /* 表头：浅灰背景 + 加粗 + 底部分割线 */
+        "QTableView#stationTable QHeaderView::section{background-color:#f5f7fa;color:#1a2332;"
+        "border:none;border-bottom:1px solid #e8ecf0;padding:10px 8px;font-weight:700;}"
+        "QTableView#stationTable QTableCornerButton::section{background-color:#f5f7fa;border:none;"
+        "border-bottom:1px solid #e8ecf0;}"
         /* 分页按钮 */
         "QPushButton#btnStationPrev,QPushButton#btnStationNext{background-color:#ffffff;"
         "color:#1a2332;border:1px solid #d9dee5;border-radius:6px;padding:5px 16px;}"
@@ -155,6 +235,12 @@ void StationManagementWidget::buildUi()
     m_searchEdit->setPlaceholderText(QStringLiteral("按站名搜索"));
     m_searchEdit->setClearButtonEnabled(true);
     m_searchEdit->setFixedWidth(220);
+    // 前置放大镜图标
+    {
+        const QIcon searchIcon(QStringLiteral(":/img/search.svg"));
+        QAction *act = m_searchEdit->addAction(searchIcon, QLineEdit::LeadingPosition);
+        act->setEnabled(false); // 仅作图标展示，不可点击
+    }
 
     m_statusCombo = new QComboBox(toolbar);
     m_statusCombo->setObjectName(QStringLiteral("stationStatusCombo"));
@@ -189,17 +275,46 @@ void StationManagementWidget::buildUi()
     m_tableView->setAlternatingRowColors(true);
     m_tableView->setWordWrap(false);
     m_tableView->verticalHeader()->setVisible(false);
-    m_tableView->verticalHeader()->setDefaultSectionSize(44);
+    m_tableView->verticalHeader()->setDefaultSectionSize(40);
     m_tableView->horizontalHeader()->setHighlightSections(false);
+    m_tableView->horizontalHeader()->setMinimumSectionSize(60);
+    // 默认：站名与地址列拉伸，其余固定
     m_tableView->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    // 操作列（详情 + 上线/下线 两个按钮）固定宽度，其余列均分拉伸
+
+    // 列宽优化：站 ID 窄、站名/地址宽、经纬度/总桩/可用率/状态/操作固定
     m_tableView->horizontalHeader()->setSectionResizeMode(
-        StationManagementModel::ActionCol, QHeaderView::Fixed);
-    m_tableView->setColumnWidth(StationManagementModel::ActionCol, 170);
-    // 经纬度列固定宽度（"116.391234, 39.907865" 约 18 字符，200px 可完整显示）
+        StationManagementModel::StationIdCol, QHeaderView::Fixed);
+    m_tableView->setColumnWidth(StationManagementModel::StationIdCol, 70);
+
+    m_tableView->horizontalHeader()->setSectionResizeMode(
+        StationManagementModel::NameCol, QHeaderView::Stretch);
+
+    m_tableView->horizontalHeader()->setSectionResizeMode(
+        StationManagementModel::AddressCol, QHeaderView::Stretch);
+
     m_tableView->horizontalHeader()->setSectionResizeMode(
         StationManagementModel::LngLatCol, QHeaderView::Fixed);
-    m_tableView->setColumnWidth(StationManagementModel::LngLatCol, 200);
+    m_tableView->setColumnWidth(StationManagementModel::LngLatCol, 170);
+
+    m_tableView->horizontalHeader()->setSectionResizeMode(
+        StationManagementModel::TotalPilesCol, QHeaderView::Fixed);
+    m_tableView->setColumnWidth(StationManagementModel::TotalPilesCol, 70);
+
+    // 可用率列：固定宽度 + 进度条自绘代理
+    m_tableView->horizontalHeader()->setSectionResizeMode(
+        StationManagementModel::OnlineRateCol, QHeaderView::Fixed);
+    m_tableView->setColumnWidth(StationManagementModel::OnlineRateCol, 110);
+    m_onlineRateDelegate = new OnlineRateDelegate(m_tableView);
+    m_tableView->setItemDelegateForColumn(
+        StationManagementModel::OnlineRateCol, m_onlineRateDelegate);
+
+    m_tableView->horizontalHeader()->setSectionResizeMode(
+        StationManagementModel::StatusCol, QHeaderView::Fixed);
+    m_tableView->setColumnWidth(StationManagementModel::StatusCol, 80);
+
+    m_tableView->horizontalHeader()->setSectionResizeMode(
+        StationManagementModel::ActionCol, QHeaderView::Fixed);
+    m_tableView->setColumnWidth(StationManagementModel::ActionCol, 160);
     rootLayout->addWidget(m_tableView, 1);
 
     // ---------------- 底部分页栏 ----------------
@@ -516,20 +631,36 @@ void StationManagementWidget::showSalesDetail(int stationId, const QString &stat
                             .arg(stationId));
     dlg->setModal(true);
     dlg->setMinimumSize(680, 460);
-    // 轻量专业风弹窗样式（QTabWidget + QTableWidget）
-    dlg->setStyleSheet(QStringLiteral(
-        "QDialog{background-color:#ffffff;}"
-        "QTabWidget::pane{border:1px solid #e8ecf0;background-color:#ffffff;border-radius:6px;}"
-        "QTabBar::tab{background-color:#f8fafc;color:#4a5a6e;padding:8px 24px;"
-        "border:1px solid #e8ecf0;border-bottom:none;border-top-left-radius:6px;border-top-right-radius:6px;}"
-        "QTabBar::tab:selected{background-color:#ffffff;color:#1a5cff;border-bottom:2px solid #2b7bff;}"
-        "QTableWidget{background-color:#ffffff;alternate-background-color:#f8fafc;"
-        "color:#1a2332;gridline-color:#eef1f5;border:none;}"
-        "QTableWidget QHeaderView::section{background-color:#f8fafc;color:#4a5a6e;"
-        "border:none;border-bottom:1px solid #e8ecf0;padding:8px;font-weight:600;}"
-        "QPushButton{background-color:#ffffff;color:#1a2332;"
-        "border:1px solid #d9dee5;border-radius:6px;padding:6px 18px;min-width:72px;}"
-        "QPushButton:hover{border:1px solid #2b7bff;color:#2b7bff;}"));
+    // 弹窗样式：浅色/深色随主题切换
+    if (m_dark) {
+        dlg->setStyleSheet(QStringLiteral(
+            "QDialog{background-color:#1a1d23;}"
+            "QTabWidget::pane{border:1px solid #3a4050;background-color:#252a33;border-radius:6px;}"
+            "QTabBar::tab{background-color:#2a3040;color:#a0a8b8;padding:8px 24px;"
+            "border:1px solid #3a4050;border-bottom:none;border-top-left-radius:6px;border-top-right-radius:6px;}"
+            "QTabBar::tab:selected{background-color:#252a33;color:#4d9bff;border-bottom:2px solid #2b7bff;}"
+            "QTableWidget{background-color:#252a33;alternate-background-color:#2a3040;"
+            "color:#e8ecf0;gridline-color:#3a4050;border:none;}"
+            "QTableWidget QHeaderView::section{background-color:#2a3040;color:#a0a8b8;"
+            "border:none;border-bottom:1px solid #3a4050;padding:8px;font-weight:600;}"
+            "QPushButton{background-color:#2a3040;color:#e8ecf0;"
+            "border:1px solid #3a4050;border-radius:6px;padding:6px 18px;min-width:72px;}"
+            "QPushButton:hover{border:1px solid #2b7bff;color:#4d9bff;}"));
+    } else {
+        dlg->setStyleSheet(QStringLiteral(
+            "QDialog{background-color:#ffffff;}"
+            "QTabWidget::pane{border:1px solid #e8ecf0;background-color:#ffffff;border-radius:6px;}"
+            "QTabBar::tab{background-color:#f8fafc;color:#4a5a6e;padding:8px 24px;"
+            "border:1px solid #e8ecf0;border-bottom:none;border-top-left-radius:6px;border-top-right-radius:6px;}"
+            "QTabBar::tab:selected{background-color:#ffffff;color:#1a5cff;border-bottom:2px solid #2b7bff;}"
+            "QTableWidget{background-color:#ffffff;alternate-background-color:#f8fafc;"
+            "color:#1a2332;gridline-color:#eef1f5;border:none;}"
+            "QTableWidget QHeaderView::section{background-color:#f8fafc;color:#4a5a6e;"
+            "border:none;border-bottom:1px solid #e8ecf0;padding:8px;font-weight:600;}"
+            "QPushButton{background-color:#ffffff;color:#1a2332;"
+            "border:1px solid #d9dee5;border-radius:6px;padding:6px 18px;min-width:72px;}"
+            "QPushButton:hover{border:1px solid #2b7bff;color:#2b7bff;}"));
+    }
 
     auto *lay = new QVBoxLayout(dlg);
     lay->setContentsMargins(16, 16, 16, 16);
@@ -662,7 +793,7 @@ void StationManagementWidget::fillSalesTable(QTableWidget *table, const QJsonObj
         table->setSpan(0, 0, 1, 4);
         auto *placeholder = new QTableWidgetItem(tr("暂无数据"));
         placeholder->setTextAlignment(Qt::AlignCenter);
-        placeholder->setForeground(QColor(0x5a, 0x6b, 0x85));
+        placeholder->setForeground(m_dark ? QColor(0xa0, 0xa8, 0xb8) : QColor(0x5a, 0x6b, 0x85));
         table->setItem(0, 0, placeholder);
         return;
     }
@@ -719,7 +850,7 @@ void StationManagementWidget::fillPileListTable(const QJsonArray &piles)
         m_pileListTable->setSpan(0, 0, 1, 6);
         auto *placeholder = new QTableWidgetItem(tr("暂无电桩"));
         placeholder->setTextAlignment(Qt::AlignCenter);
-        placeholder->setForeground(QColor(0x5a, 0x6b, 0x85));
+        placeholder->setForeground(m_dark ? QColor(0xa0, 0xa8, 0xb8) : QColor(0x5a, 0x6b, 0x85));
         m_pileListTable->setItem(0, 0, placeholder);
         m_pileListLoaded = true;
         return;
@@ -767,4 +898,86 @@ void StationManagementWidget::fillPileListTable(const QJsonArray &piles)
         m_pileListTable->setItem(row, 5, hoursItem);
     }
     m_pileListLoaded = true;
+}
+
+// ------------- 白天/夜晚主题切换 -------------
+void StationManagementWidget::applyTheme(bool dark)
+{
+    m_dark = dark;
+
+    if (!dark) {
+        // 浅色（与 buildUi 中一致）
+        setStyleSheet(QStringLiteral(
+            "QFrame#stationToolbar{background-color:#ffffff;border:1px solid #e8ecf0;border-radius:8px;}"
+            "QLineEdit#stationSearchEdit{background-color:#ffffff;color:#1a2332;"
+            "border:1px solid #d9dee5;border-radius:6px;padding:6px 10px 6px 32px;min-height:22px;}"
+            "QLineEdit#stationSearchEdit:focus{border:1px solid #2b7bff;}"
+            "QComboBox#stationStatusCombo{background-color:#ffffff;color:#1a2332;"
+            "border:1px solid #d9dee5;border-radius:6px;padding:6px 12px;min-height:22px;}"
+            "QComboBox#stationStatusCombo:hover{border:1px solid #2b7bff;}"
+            "QComboBox#stationStatusCombo QAbstractItemView{background-color:#ffffff;"
+            "color:#1a2332;selection-background-color:#e8f0fe;selection-color:#1a5cff;}"
+            "QPushButton#btnStationQuery{background-color:#2b7bff;color:#ffffff;"
+            "border:1px solid #2b7bff;border-radius:6px;padding:6px 18px;min-width:72px;font-weight:600;}"
+            "QPushButton#btnStationQuery:hover{background-color:#1a5cff;border-color:#1a5cff;}"
+            "QPushButton#btnStationRefresh{background-color:#ffffff;color:#4a5a6e;"
+            "border:1px solid #d9dee5;border-radius:6px;padding:6px 18px;min-width:72px;}"
+            "QPushButton#btnStationRefresh:hover{border:1px solid #2b7bff;color:#2b7bff;}"
+            "QPushButton#btnStationAdd{background-color:#52c41a;color:#ffffff;"
+            "border:1px solid #52c41a;border-radius:6px;padding:6px 18px;min-width:88px;font-weight:600;}"
+            "QPushButton#btnStationAdd:hover{background-color:#389e0d;border-color:#389e0d;}"
+            "QTableView#stationTable{background-color:#ffffff;alternate-background-color:#fafbfc;"
+            "color:#1a2332;gridline-color:#eef1f5;border:1px solid #e8ecf0;border-radius:8px;"
+            "selection-background-color:#e8f0fe;selection-color:#1a5cff;outline:none;}"
+            "QTableView#stationTable::item:hover{background-color:#eef5ff;}"
+            "QTableView#stationTable QHeaderView::section{background-color:#f5f7fa;color:#1a2332;"
+            "border:none;border-bottom:1px solid #e8ecf0;padding:10px 8px;font-weight:700;}"
+            "QTableView#stationTable QTableCornerButton::section{background-color:#f5f7fa;border:none;"
+            "border-bottom:1px solid #e8ecf0;}"
+            "QPushButton#btnStationPrev,QPushButton#btnStationNext{background-color:#ffffff;"
+            "color:#1a2332;border:1px solid #d9dee5;border-radius:6px;padding:5px 16px;}"
+            "QPushButton#btnStationPrev:hover:enabled,QPushButton#btnStationNext:hover:enabled{border:1px solid #2b7bff;color:#2b7bff;}"
+            "QPushButton#btnStationPrev:disabled,QPushButton#btnStationNext:disabled{color:#8a9aa8;border-color:#e8ecf0;}"
+            "QLabel#stationPageLabel{color:#4a5a6e;font-size:13px;}"));
+    } else {
+        // 深色：背景翻转，主色保持
+        setStyleSheet(QStringLiteral(
+            "QFrame#stationToolbar{background-color:#252a33;border:1px solid #3a4050;border-radius:8px;}"
+            "QLineEdit#stationSearchEdit{background-color:#2a3040;color:#e8ecf0;"
+            "border:1px solid #3a4050;border-radius:6px;padding:6px 10px 6px 32px;min-height:22px;}"
+            "QLineEdit#stationSearchEdit:focus{border:1px solid #2b7bff;}"
+            "QComboBox#stationStatusCombo{background-color:#2a3040;color:#e8ecf0;"
+            "border:1px solid #3a4050;border-radius:6px;padding:6px 12px;min-height:22px;}"
+            "QComboBox#stationStatusCombo:hover{border:1px solid #2b7bff;}"
+            "QComboBox#stationStatusCombo QAbstractItemView{background-color:#2a3040;"
+            "color:#e8ecf0;selection-background-color:#1e3a5f;selection-color:#4d9bff;}"
+            "QPushButton#btnStationQuery{background-color:#2b7bff;color:#ffffff;"
+            "border:1px solid #2b7bff;border-radius:6px;padding:6px 18px;min-width:72px;font-weight:600;}"
+            "QPushButton#btnStationQuery:hover{background-color:#1a5cff;border-color:#1a5cff;}"
+            "QPushButton#btnStationRefresh{background-color:#2a3040;color:#a0a8b8;"
+            "border:1px solid #3a4050;border-radius:6px;padding:6px 18px;min-width:72px;}"
+            "QPushButton#btnStationRefresh:hover{border:1px solid #2b7bff;color:#4d9bff;}"
+            "QPushButton#btnStationAdd{background-color:#52c41a;color:#ffffff;"
+            "border:1px solid #52c41a;border-radius:6px;padding:6px 18px;min-width:88px;font-weight:600;}"
+            "QPushButton#btnStationAdd:hover{background-color:#389e0d;border-color:#389e0d;}"
+            "QTableView#stationTable{background-color:#252a33;alternate-background-color:#2a2f38;"
+            "color:#e8ecf0;gridline-color:#3a4050;border:1px solid #3a4050;border-radius:8px;"
+            "selection-background-color:#1e3a5f;selection-color:#4d9bff;outline:none;}"
+            "QTableView#stationTable::item:hover{background-color:#2a3a52;}"
+            "QTableView#stationTable QHeaderView::section{background-color:#2a2f38;color:#a0a8b8;"
+            "border:none;border-bottom:1px solid #3a4050;padding:10px 8px;font-weight:700;}"
+            "QTableView#stationTable QTableCornerButton::section{background-color:#2a2f38;border:none;"
+            "border-bottom:1px solid #3a4050;}"
+            "QPushButton#btnStationPrev,QPushButton#btnStationNext{background-color:#2a3040;"
+            "color:#e8ecf0;border:1px solid #3a4050;border-radius:6px;padding:5px 16px;}"
+            "QPushButton#btnStationPrev:hover:enabled,QPushButton#btnStationNext:hover:enabled{border:1px solid #2b7bff;color:#4d9bff;}"
+            "QPushButton#btnStationPrev:disabled,QPushButton#btnStationNext:disabled{color:#7a8290;border-color:#3a4050;}"
+            "QLabel#stationPageLabel{color:#a0a8b8;font-size:13px;}"));
+    }
+
+    // 可用率列自绘代理：切换文字/轨道颜色
+    if (m_onlineRateDelegate) {
+        m_onlineRateDelegate->setDark(dark);
+        m_tableView->viewport()->update();
+    }
 }

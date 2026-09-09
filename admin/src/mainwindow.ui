@@ -179,6 +179,44 @@
            </property>
           </spacer>
          </item>
+         <item>
+          <widget class="QLabel" name="adminInfoLabel">
+           <property name="text">
+            <string>管理员：admin</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignLeading|Qt::AlignVCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btnThemeToggle">
+           <property name="text">
+            <string>  白天模式</string>
+           </property>
+           <property name="cursor">
+            <cursorShape>PointingHandCursor</cursorShape>
+           </property>
+           <property name="icon">
+            <iconset resource="resources.qrc">
+             <normaloff>:/img/sun.svg</normaloff>:/img/sun.svg</iconset>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btnLogout">
+           <property name="text">
+            <string>  退出登录</string>
+           </property>
+           <property name="cursor">
+            <cursorShape>PointingHandCursor</cursorShape>
+           </property>
+           <property name="icon">
+            <iconset resource="resources.qrc">
+             <normaloff>:/img/user-manage.svg</normaloff>:/img/user-manage.svg</iconset>
+           </property>
+          </widget>
+         </item>
         </layout>
        </widget>
       </item>

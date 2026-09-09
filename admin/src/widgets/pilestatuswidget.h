@@ -44,6 +44,9 @@ public:
 
     void setAuthToken(const QString &token);
 
+    /** 应用浅色/深色主题（由 MainWindow 主题切换时调用） */
+    void applyTheme(bool dark);
+
 protected:
     void showEvent(QShowEvent *event) override;
 
@@ -69,6 +72,7 @@ private:
 
     PileStatusModel *m_model;
     QPushButton *m_btnRefresh = nullptr;
+    bool m_dark = false;  // 当前是否为深色主题
     QLabel *m_lblTotalInTitle = nullptr;   // 标题栏中的"总桩数 N"
     QChartView *m_chartView = nullptr;
 

@@ -22,7 +22,8 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    explicit MainWindow(const QString &authToken, QWidget *parent = nullptr);
+    explicit MainWindow(const QString &authToken, const QString &username,
+                        QWidget *parent = nullptr);
     ~MainWindow();
 
     /**
@@ -35,6 +36,10 @@ public:
      */
     void showOrdersForUser(int userId, const QString &phone);
 
+signals:
+    /** 用户点击"退出登录"并确认后发出，由 main.cpp 接管回到登录流程 */
+    void logoutRequested();
+
 public slots:
     /** 追加一行操作日志到底部日志区 */
     void appendLog(const QString &message);
@@ -46,9 +51,12 @@ private slots:
 private:
     void setupMenu();          // 初始化侧边栏按钮组
     void setupPlaceholders();  // 初始化占位页文案
+    void applyTheme(bool dark); // 应用浅色/深色主题
+    void toggleTheme();         // 切换白天/夜晚主题
 
     Ui::MainWindow *ui;
     QButtonGroup *m_menuGroup; // 侧边栏按钮互斥组
+    bool m_isDark = false;     // 当前是否为深色主题
 };
 
 #endif // MAINWINDOW_H

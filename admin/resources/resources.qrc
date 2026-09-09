@@ -2,6 +2,7 @@
     <qresource prefix="/">
         <!-- QSS 样式表 -->
         <file>style.qss</file>
+        <file>style-dark.qss</file>
         <!-- 侧边栏占位图标（SVG，矢量可缩放） -->
         <file>img/dashboard.svg</file>
         <file>img/pile-status.svg</file>
@@ -15,5 +16,11 @@
         <file>img/eye.svg</file>
         <file>img/eye-off.svg</file>
         <file>img/check.svg</file>
+        <file>img/icon-money.svg</file>
+        <file>img/icon-chart.svg</file>
+        <file>img/icon-bank.svg</file>
+        <file>img/search.svg</file>
+        <file>img/sun.svg</file>
+        <file>img/moon.svg</file>
     </qresource>
 </RCC>

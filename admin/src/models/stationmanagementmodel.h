@@ -60,9 +60,10 @@ public:
 
     /** 行自定义数据角色（Widget 构建操作按钮时读取） */
     enum DataRole {
-        StationIdRole = Qt::UserRole + 1,  // 充电站 ID（int，模拟数据为负数）
-        StatusRole    = Qt::UserRole + 2,  // 状态（int, 1=正常运营 2=维护中）
-        NameRole      = Qt::UserRole + 3   // 站名（QString）
+        StationIdRole   = Qt::UserRole + 1,  // 充电站 ID（int，模拟数据为负数）
+        StatusRole      = Qt::UserRole + 2,  // 状态（int, 1=正常运营 2=维护中）
+        NameRole        = Qt::UserRole + 3,  // 站名（QString）
+        OnlineRateRole  = Qt::UserRole + 4   // 可用率数值（double, 0~100，用于渲染进度条）
     };
 
     /** 充电站信息（与 API 返回字段对齐） */

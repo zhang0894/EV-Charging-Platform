@@ -9,8 +9,11 @@
 #include "ui_mainwindow.h"
 
 #include <QDateTime>
+#include <QMessageBox>
+#include <QFile>
+#include <QTextStream>
 
-MainWindow::MainWindow(const QString &authToken, QWidget *parent)
+MainWindow::MainWindow(const QString &authToken, const QString &username, QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
     , m_menuGroup(new QButtonGroup(this))
@@ -19,6 +22,11 @@ MainWindow::MainWindow(const QString &authToken, QWidget *parent)
     // 设置窗口图标与默认尺寸
     setWindowIcon(QIcon(QStringLiteral(":/img/app-logo.svg")));
     resize(1280, 800);
+
+    // 侧边栏底部显示当前登录的管理员账号
+    if (ui->adminInfoLabel) {
+        ui->adminInfoLabel->setText(tr("管理员：%1").arg(username.isEmpty() ? tr("未知") : username));
+    }
 
     // 菜单按钮互斥（同一时刻仅一个选中）
     m_menuGroup->setExclusive(true);
@@ -140,6 +148,20 @@ void MainWindow::setupMenu()
 
     connect(m_menuGroup, &QButtonGroup::idClicked,
             this, &MainWindow::onMenuClicked);
+
+    // 退出登录：确认后发出 logoutRequested 信号，由 main.cpp 接管回到登录流程
+    connect(ui->btnLogout, &QPushButton::clicked, this, [this]() {
+        const QMessageBox::StandardButton ret = QMessageBox::question(
+            this, tr("退出登录"), tr("确定要退出当前账号吗？"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (ret == QMessageBox::Yes) {
+            appendLog(tr("用户已退出登录"));
+            emit logoutRequested();
+        }
+    });
+
+    // 白天/夜晚主题切换
+    connect(ui->btnThemeToggle, &QPushButton::clicked, this, &MainWindow::toggleTheme);
 }
 
 void MainWindow::onMenuClicked(int id)
@@ -174,4 +196,69 @@ void MainWindow::appendLog(const QString &message)
     const QString stamp = QDateTime::currentDateTime()
                               .toString("yyyy-MM-dd hh:mm:ss");
     ui->logEdit->appendPlainText(QStringLiteral("[%1] %2").arg(stamp, message));
+}
+
+// ------------- 白天/夜晚主题切换 -------------
+void MainWindow::toggleTheme()
+{
+    applyTheme(!m_isDark);
+}
+
+void MainWindow::applyTheme(bool dark)
+{
+    // 切换前保存窗口几何信息，避免主题切换导致窗口尺寸变化
+    const QRect savedGeo = geometry();
+    const bool wasMaximized = isMaximized();
+
+    m_isDark = dark;
+
+    // 1. 加载并应用全局 QSS
+    const QString qssPath = dark ? QStringLiteral(":/style-dark.qss")
+                                 : QStringLiteral(":/style.qss");
+    QFile file(qssPath);
+    if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QTextStream ts(&file);
+        ts.setEncoding(QStringConverter::Utf8);
+        qApp->setStyleSheet(ts.readAll());
+        file.close();
+    }
+
+    // 2. 切换按钮图标与文字：白天显示太阳+白天模式，夜晚显示月亮+夜晚模式
+    ui->btnThemeToggle->setIcon(QIcon(dark ? QStringLiteral(":/img/moon.svg")
+                                           : QStringLiteral(":/img/sun.svg")));
+    ui->btnThemeToggle->setText(dark ? QStringLiteral("  夜晚模式")
+                                     : QStringLiteral("  白天模式"));
+
+    // 3. 通知各业务页面刷新局部样式（Dashboard 卡片、各管理页表格等）
+    if (DashboardWidget *dash = qobject_cast<DashboardWidget *>(
+            ui->contentStack->widget(0))) {
+        dash->applyTheme(dark);
+    }
+    if (StationManagementWidget *station = findChild<StationManagementWidget *>()) {
+        station->applyTheme(dark);
+    }
+    if (PileManagementWidget *pile = findChild<PileManagementWidget *>()) {
+        pile->applyTheme(dark);
+    }
+    if (PileStatusWidget *pileStatus = findChild<PileStatusWidget *>()) {
+        pileStatus->applyTheme(dark);
+    }
+    if (UserManagementWidget *user = findChild<UserManagementWidget *>()) {
+        user->applyTheme(dark);
+    }
+    if (OrderManagementWidget *order = findChild<OrderManagementWidget *>()) {
+        order->applyTheme(dark);
+    }
+
+    // 4. 恢复窗口几何信息并强制刷新布局，确保内容全屏显示不被裁剪
+    if (wasMaximized) {
+        showMaximized();
+    } else {
+        setGeometry(savedGeo);
+    }
+    ui->contentStack->currentWidget()->updateGeometry();
+    updateGeometry();
+    update();
+
+    appendLog(dark ? tr("切换到夜晚模式") : tr("切换到白天模式"));
 }
