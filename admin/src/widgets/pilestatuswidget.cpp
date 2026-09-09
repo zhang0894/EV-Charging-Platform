@@ -153,6 +153,7 @@ QFrame *PileStatusWidget::makeCard(const QString &title, const QString &objectNa
     lay->setSpacing(4);
 
     auto *lblTitle = new QLabel(title, card);
+    lblTitle->setObjectName(QStringLiteral("pileCardTitle"));
     lblTitle->setStyleSheet(QStringLiteral(
         "color:#4a5a6e;font-size:14px;font-weight:500;background:transparent;border:none;"));
 
@@ -234,6 +235,9 @@ void PileStatusWidget::updateChart(int inUse, int idle, int fault, int offline,
 
     auto *chart = new QChart();
 
+    // 扇区标签颜色：深色模式用浅色字
+    const QColor labelColor = m_dark ? QColor(0xe8, 0xec, 0xf0) : QColor(0x1a, 0x23, 0x32);
+
     // ===== 外圈：4 扇区（在用 / 闲置 / 故障 / 离线） =====
     auto *outerSeries = new QPieSeries();
     outerSeries->setPieSize(0.9);     // 外圈占 chart 区域 90%
@@ -253,7 +257,7 @@ void PileStatusWidget::updateChart(int inUse, int idle, int fault, int offline,
         }
         QPieSlice *slice = outerSeries->append(tr(def.name), def.value);
         slice->setColor(QColor(def.color));
-        slice->setLabelColor(QColor("#1a2332"));
+        slice->setLabelColor(labelColor);
         slice->setLabelVisible(true);
         slice->setLabelPosition(QPieSlice::LabelInsideHorizontal);
     }
@@ -275,7 +279,7 @@ void PileStatusWidget::updateChart(int inUse, int idle, int fault, int offline,
         }
         QPieSlice *slice = innerSeries->append(tr(def.name), def.value);
         slice->setColor(QColor(def.color));
-        slice->setLabelColor(QColor("#1a2332"));
+        slice->setLabelColor(labelColor);
         slice->setLabelVisible(true);
         slice->setLabelPosition(QPieSlice::LabelInsideHorizontal);
     }
@@ -284,8 +288,10 @@ void PileStatusWidget::updateChart(int inUse, int idle, int fault, int offline,
     // ===== 图表全局样式 =====
     chart->setTitle(tr("电桩状态分布"));
     chart->setTitleFont(QFont(QStringLiteral("Microsoft YaHei"), 12, QFont::Bold));
+    chart->setTitleBrush(QBrush(labelColor));
     chart->legend()->setAlignment(Qt::AlignBottom);
     chart->legend()->setFont(QFont(QStringLiteral("Microsoft YaHei"), 9));
+    chart->legend()->setLabelColor(m_dark ? QColor(0xa0, 0xa8, 0xb8) : QColor(0x4a, 0x5a, 0x6e));
     chart->setAnimationOptions(QChart::SeriesAnimations);
     chart->setBackgroundVisible(false);
     chart->setMargins(QMargins(0, 0, 0, 0));
@@ -298,4 +304,62 @@ void PileStatusWidget::updateChart(int inUse, int idle, int fault, int offline,
 void PileStatusWidget::onErrorOccurred(const QString &msg)
 {
     QMessageBox::critical(this, tr("加载失败"), msg);
+}
+
+// ------------- 白天/夜晚主题切换 -------------
+void PileStatusWidget::applyTheme(bool dark)
+{
+    m_dark = dark;
+
+    if (!dark) {
+        setStyleSheet(QStringLiteral(
+            "QFrame#cardPileOnline,QFrame#cardPileIdle,QFrame#cardPileInUse,"
+            "QFrame#cardPileMaintenance,QFrame#cardPileFault,QFrame#cardPileOffline{"
+            "background-color:#ffffff;border:1px solid #e8ecf0;border-radius:8px;}"
+            "QPushButton#btnPileRefresh{background-color:#ffffff;color:#1a2332;"
+            "border:1px solid #d9dee5;border-radius:6px;padding:6px 18px;min-width:72px;}"
+            "QPushButton#btnPileRefresh:hover{border:1px solid #2b7bff;color:#2b7bff;}"));
+    } else {
+        setStyleSheet(QStringLiteral(
+            "QFrame#cardPileOnline,QFrame#cardPileIdle,QFrame#cardPileInUse,"
+            "QFrame#cardPileMaintenance,QFrame#cardPileFault,QFrame#cardPileOffline{"
+            "background-color:#252a33;border:1px solid #3a4050;border-radius:8px;}"
+            "QPushButton#btnPileRefresh{background-color:#2a3040;color:#e8ecf0;"
+            "border:1px solid #3a4050;border-radius:6px;padding:6px 18px;min-width:72px;}"
+            "QPushButton#btnPileRefresh:hover{border:1px solid #2b7bff;color:#4d9bff;}"));
+    }
+    // 标题与总桩数标签文字颜色随主题切换
+    if (auto *title = findChild<QLabel *>()) {
+        // 第一个 QLabel 即标题（buildUi 中第一个创建的）
+        title->setStyleSheet(dark
+            ? QStringLiteral("color:#e8ecf0;font-size:16px;font-weight:600;background:transparent;")
+            : QStringLiteral("color:#1a2332;font-size:16px;font-weight:600;background:transparent;"));
+    }
+    if (m_lblTotalInTitle) {
+        m_lblTotalInTitle->setStyleSheet(dark
+            ? QStringLiteral("color:#a0a8b8;font-size:14px;font-weight:500;background:transparent;")
+            : QStringLiteral("color:#4a5a6e;font-size:14px;font-weight:500;background:transparent;"));
+    }
+
+    // 卡片标题（在线数/闲置数等）颜色随主题切换
+    const QString cardTitleQss = dark
+        ? QStringLiteral("color:#c8d0dc;font-size:14px;font-weight:500;background:transparent;border:none;")
+        : QStringLiteral("color:#4a5a6e;font-size:14px;font-weight:500;background:transparent;border:none;");
+    for (QLabel *lbl : findChildren<QLabel *>(QStringLiteral("pileCardTitle"))) {
+        lbl->setStyleSheet(cardTitleQss);
+    }
+
+    // 饼图标题与图例颜色
+    if (m_chartView && m_chartView->chart()) {
+        QChart *chart = m_chartView->chart();
+        chart->setTitleBrush(QBrush(dark ? QColor(0xe8, 0xec, 0xf0) : QColor(0x1a, 0x23, 0x32)));
+        if (chart->legend()) {
+            chart->legend()->setLabelColor(dark ? QColor(0xa0, 0xa8, 0xb8) : QColor(0x4a, 0x5a, 0x6e));
+        }
+    }
+
+    // 重绘饼图（扇区标签颜色随主题切换），若已有数据则刷新
+    if (!m_lastData.isEmpty()) {
+        refreshCards();
+    }
 }

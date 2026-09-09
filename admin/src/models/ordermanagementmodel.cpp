@@ -28,7 +28,7 @@ static void applyElidedCellText(QStandardItem *item, const QString &fullText,
 
     const QTableView *view = nullptr;
     if (const auto *scopeWidget = qobject_cast<const QWidget *>(scope)) {
-        view = scopeWidget->findChild<const QTableView *>(QLatin1StringView(viewName));
+        view = scopeWidget->findChild<const QTableView *>(QLatin1String(viewName));
     }
 
     const QFontMetrics fm(view ? view->font() : QApplication::font());

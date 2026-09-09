@@ -305,9 +305,26 @@ void PileManagementWidget::onNextPage()
 // ------------- 远程重启：确认与执行 -------------
 void PileManagementWidget::confirmAndRestart(const QString &pileId, QPushButton *btn)
 {
+    // 查找该电桩当前状态，用于判断是否需要追加充电中断警告
+    QString currentStatus;
+    QStandardItemModel *tm = m_model->getModel();
+    for (int r = 0; r < tm->rowCount(); ++r) {
+        const QModelIndex idx = tm->index(r, PileManagementModel::ActionCol);
+        if (idx.data(PileManagementModel::PileIdRole).toString() == pileId) {
+            currentStatus = idx.data(PileManagementModel::CurrentStatusRole).toString();
+            break;
+        }
+    }
+
+    // 基础确认文案
+    QString message = tr("确认对电桩 [%1] 执行远程重启吗？").arg(pileId);
+    // 仅"充电中"状态追加中断警告，其他状态不追加
+    if (currentStatus == QStringLiteral("CHARGING")) {
+        message += QStringLiteral("\n\n该电桩正在充电，重启会中断用户充电。");
+    }
+
     const QMessageBox::StandardButton ret = QMessageBox::question(
-        this, tr("远程重启"),
-        tr("确认对电桩 [%1] 执行远程重启吗？").arg(pileId),
+        this, tr("远程重启"), message,
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     if (ret != QMessageBox::Yes) {
         return;
@@ -319,4 +336,54 @@ void PileManagementWidget::confirmAndRestart(const QString &pileId, QPushButton 
     btn->setEnabled(false);
 
     m_model->restartPile(pileId);
+}
+
+// ------------- 白天/夜晚主题切换 -------------
+void PileManagementWidget::applyTheme(bool dark)
+{
+    if (!dark) {
+        setStyleSheet(QStringLiteral(
+            "QFrame#pileToolbar{background-color:#ffffff;border:1px solid #e8ecf0;border-radius:8px;}"
+            "QComboBox#pileStatusCombo,QComboBox#pileTypeCombo{background-color:#ffffff;color:#1a2332;"
+            "border:1px solid #d9dee5;border-radius:6px;padding:6px 12px;}"
+            "QComboBox#pileStatusCombo:hover,QComboBox#pileTypeCombo:hover{border:1px solid #2b7bff;}"
+            "QComboBox#pileStatusCombo QAbstractItemView,QComboBox#pileTypeCombo QAbstractItemView"
+            "{background-color:#ffffff;color:#1a2332;selection-background-color:#e8f0fe;selection-color:#1a5cff;}"
+            "QPushButton#btnPileQuery,QPushButton#btnPileRefresh{background-color:#ffffff;"
+            "color:#1a2332;border:1px solid #d9dee5;border-radius:6px;padding:6px 18px;min-width:72px;}"
+            "QPushButton#btnPileQuery:hover,QPushButton#btnPileRefresh:hover{border:1px solid #2b7bff;color:#2b7bff;}"
+            "QTableView#pileTable{background-color:#ffffff;alternate-background-color:#f8fafc;"
+            "color:#1a2332;gridline-color:#eef1f5;border:1px solid #e8ecf0;border-radius:8px;"
+            "selection-background-color:#e8f0fe;selection-color:#1a5cff;}"
+            "QTableView#pileTable QHeaderView::section{background-color:#f8fafc;color:#4a5a6e;"
+            "border:none;border-bottom:1px solid #e8ecf0;padding:8px;font-weight:600;}"
+            "QTableView#pileTable QTableCornerButton::section{background-color:#f8fafc;border:none;}"
+            "QPushButton#btnPilePrev,QPushButton#btnPileNext{background-color:#ffffff;"
+            "color:#1a2332;border:1px solid #d9dee5;border-radius:6px;padding:5px 16px;}"
+            "QPushButton#btnPilePrev:hover:enabled,QPushButton#btnPileNext:hover:enabled{border:1px solid #2b7bff;color:#2b7bff;}"
+            "QPushButton#btnPilePrev:disabled,QPushButton#btnPileNext:disabled{color:#8a9aa8;border-color:#e8ecf0;}"
+            "QLabel#pilePageLabel{color:#4a5a6e;font-size:13px;}"));
+    } else {
+        setStyleSheet(QStringLiteral(
+            "QFrame#pileToolbar{background-color:#252a33;border:1px solid #3a4050;border-radius:8px;}"
+            "QComboBox#pileStatusCombo,QComboBox#pileTypeCombo{background-color:#2a3040;color:#e8ecf0;"
+            "border:1px solid #3a4050;border-radius:6px;padding:6px 12px;}"
+            "QComboBox#pileStatusCombo:hover,QComboBox#pileTypeCombo:hover{border:1px solid #2b7bff;}"
+            "QComboBox#pileStatusCombo QAbstractItemView,QComboBox#pileTypeCombo QAbstractItemView"
+            "{background-color:#2a3040;color:#e8ecf0;selection-background-color:#1e3a5f;selection-color:#4d9bff;}"
+            "QPushButton#btnPileQuery,QPushButton#btnPileRefresh{background-color:#2a3040;"
+            "color:#e8ecf0;border:1px solid #3a4050;border-radius:6px;padding:6px 18px;min-width:72px;}"
+            "QPushButton#btnPileQuery:hover,QPushButton#btnPileRefresh:hover{border:1px solid #2b7bff;color:#4d9bff;}"
+            "QTableView#pileTable{background-color:#252a33;alternate-background-color:#2a2f38;"
+            "color:#e8ecf0;gridline-color:#3a4050;border:1px solid #3a4050;border-radius:8px;"
+            "selection-background-color:#1e3a5f;selection-color:#4d9bff;}"
+            "QTableView#pileTable QHeaderView::section{background-color:#2a2f38;color:#a0a8b8;"
+            "border:none;border-bottom:1px solid #3a4050;padding:8px;font-weight:600;}"
+            "QTableView#pileTable QTableCornerButton::section{background-color:#2a2f38;border:none;}"
+            "QPushButton#btnPilePrev,QPushButton#btnPileNext{background-color:#2a3040;"
+            "color:#e8ecf0;border:1px solid #3a4050;border-radius:6px;padding:5px 16px;}"
+            "QPushButton#btnPilePrev:hover:enabled,QPushButton#btnPileNext:hover:enabled{border:1px solid #2b7bff;color:#4d9bff;}"
+            "QPushButton#btnPilePrev:disabled,QPushButton#btnPileNext:disabled{color:#7a8290;border-color:#3a4050;}"
+            "QLabel#pilePageLabel{color:#a0a8b8;font-size:13px;}"));
+    }
 }

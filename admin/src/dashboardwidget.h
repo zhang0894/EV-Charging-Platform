@@ -9,6 +9,7 @@
 #include <QtCharts/QDateTimeAxis>
 #include <QtCharts/QValueAxis>
 
+class QLabel;
 class DashboardModel;
 namespace Ui { class DashboardWidget; }
 
@@ -39,8 +40,19 @@ private slots:
 
 private:
     void initChart();     // 构建折线图骨架（坐标轴/系列/样式）
+    void setupCards(bool dark = false); // 初始化卡片样式：图标、渐变背景、字体
     void refreshCards();  // 从 Model summary 刷新三个核心指标卡片
     void refreshChart();  // 从 Model 日期列+营收列刷新折线图
+    /** 数字滚动动画：将 label 的文本从 0 动画到 target */
+    void animateValue(QLabel *label, double target,
+                      const QString &prefix = QStringLiteral("¥"),
+                      int decimals = 2);
+    /** 设置趋势文本与颜色（上升绿色↑ / 下降红色↓） */
+    void setTrend(QLabel *label, const QString &prefix, double percent);
+
+public:
+    /** 应用浅色/深色主题（由 MainWindow 主题切换时调用） */
+    void applyTheme(bool dark);
 
     Ui::DashboardWidget *ui;
     DashboardModel *m_model;     // 数据源（唯一数据入口）

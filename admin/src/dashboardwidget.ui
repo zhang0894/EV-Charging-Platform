@@ -45,28 +45,77 @@
        </property>
        <layout class="QVBoxLayout" name="cardTodayLayout">
         <property name="spacing">
-         <number>6</number>
+         <number>8</number>
         </property>
-        <property name="alignment">
-         <set>Qt::AlignCenter</set>
+        <property name="leftMargin">
+         <number>20</number>
+        </property>
+        <property name="topMargin">
+         <number>18</number>
+        </property>
+        <property name="rightMargin">
+         <number>20</number>
+        </property>
+        <property name="bottomMargin">
+         <number>18</number>
         </property>
         <item>
-         <widget class="QLabel" name="labelTitleToday">
-          <property name="text">
-           <string>今日营收</string>
+         <layout class="QHBoxLayout" name="todayTopRow">
+          <property name="spacing">
+           <number>10</number>
           </property>
-          <property name="alignment">
-           <set>Qt::AlignCenter</set>
-          </property>
-         </widget>
+          <item>
+           <widget class="QLabel" name="iconToday">
+            <property name="minimumSize">
+             <size>
+              <width>36</width>
+              <height>36</height>
+             </size>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>36</width>
+              <height>36</height>
+             </size>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="labelTitleToday">
+            <property name="text">
+             <string>今日营收</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="todayTopSpacer">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+         </layout>
         </item>
         <item>
          <widget class="QLabel" name="labelValueToday">
           <property name="text">
            <string>¥0.00</string>
           </property>
-          <property name="alignment">
-           <set>Qt::AlignCenter</set>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="labelTrendToday">
+          <property name="text">
+           <string>较昨日 +0.0%</string>
           </property>
          </widget>
         </item>
@@ -74,9 +123,6 @@
          <widget class="QLabel" name="labelSubToday">
           <property name="text">
            <string>今日累计营收（元）</string>
-          </property>
-          <property name="alignment">
-           <set>Qt::AlignCenter</set>
           </property>
          </widget>
         </item>
@@ -96,28 +142,77 @@
        </property>
        <layout class="QVBoxLayout" name="cardMonthLayout">
         <property name="spacing">
-         <number>6</number>
+         <number>8</number>
         </property>
-        <property name="alignment">
-         <set>Qt::AlignCenter</set>
+        <property name="leftMargin">
+         <number>20</number>
+        </property>
+        <property name="topMargin">
+         <number>18</number>
+        </property>
+        <property name="rightMargin">
+         <number>20</number>
+        </property>
+        <property name="bottomMargin">
+         <number>18</number>
         </property>
         <item>
-         <widget class="QLabel" name="labelTitleMonth">
-          <property name="text">
-           <string>本月营收</string>
+         <layout class="QHBoxLayout" name="monthTopRow">
+          <property name="spacing">
+           <number>10</number>
           </property>
-          <property name="alignment">
-           <set>Qt::AlignCenter</set>
-          </property>
-         </widget>
+          <item>
+           <widget class="QLabel" name="iconMonth">
+            <property name="minimumSize">
+             <size>
+              <width>36</width>
+              <height>36</height>
+             </size>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>36</width>
+              <height>36</height>
+             </size>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="labelTitleMonth">
+            <property name="text">
+             <string>本月营收</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="monthTopSpacer">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+         </layout>
         </item>
         <item>
          <widget class="QLabel" name="labelValueMonth">
           <property name="text">
            <string>¥0.00</string>
           </property>
-          <property name="alignment">
-           <set>Qt::AlignCenter</set>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="labelTrendMonth">
+          <property name="text">
+           <string>较上月 +0.0%</string>
           </property>
          </widget>
         </item>
@@ -125,9 +220,6 @@
          <widget class="QLabel" name="labelSubMonth">
           <property name="text">
            <string>本月累计营收（元）</string>
-          </property>
-          <property name="alignment">
-           <set>Qt::AlignCenter</set>
           </property>
          </widget>
         </item>
@@ -147,28 +239,77 @@
        </property>
        <layout class="QVBoxLayout" name="cardTotalLayout">
         <property name="spacing">
-         <number>6</number>
+         <number>8</number>
         </property>
-        <property name="alignment">
-         <set>Qt::AlignCenter</set>
+        <property name="leftMargin">
+         <number>20</number>
+        </property>
+        <property name="topMargin">
+         <number>18</number>
+        </property>
+        <property name="rightMargin">
+         <number>20</number>
+        </property>
+        <property name="bottomMargin">
+         <number>18</number>
         </property>
         <item>
-         <widget class="QLabel" name="labelTitleTotal">
-          <property name="text">
-           <string>总营收</string>
+         <layout class="QHBoxLayout" name="totalTopRow">
+          <property name="spacing">
+           <number>10</number>
           </property>
-          <property name="alignment">
-           <set>Qt::AlignCenter</set>
-          </property>
-         </widget>
+          <item>
+           <widget class="QLabel" name="iconTotal">
+            <property name="minimumSize">
+             <size>
+              <width>36</width>
+              <height>36</height>
+             </size>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>36</width>
+              <height>36</height>
+             </size>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="labelTitleTotal">
+            <property name="text">
+             <string>总营收</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="totalTopSpacer">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+         </layout>
         </item>
         <item>
          <widget class="QLabel" name="labelValueTotal">
           <property name="text">
            <string>¥0.00</string>
           </property>
-          <property name="alignment">
-           <set>Qt::AlignCenter</set>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="labelTrendTotal">
+          <property name="text">
+           <string>较去年 +0.0%</string>
           </property>
          </widget>
         </item>
@@ -176,9 +317,6 @@
          <widget class="QLabel" name="labelSubTotal">
           <property name="text">
            <string>历史累计营收（元）</string>
-          </property>
-          <property name="alignment">
-           <set>Qt::AlignCenter</set>
           </property>
          </widget>
         </item>

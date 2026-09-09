@@ -56,6 +56,9 @@ public:
      */
     void setFilterByUser(qint64 userId, const QString &phone);
 
+    /** 应用浅色/深色主题（由 MainWindow 主题切换时调用） */
+    void applyTheme(bool dark);
+
 signals:
     /** 日志转发：Model 的查询/操作事件与失败信息（由 MainWindow 连接 appendLog） */
     void logMessage(const QString &message);

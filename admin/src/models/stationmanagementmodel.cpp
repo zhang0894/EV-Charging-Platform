@@ -29,7 +29,7 @@ void applyElidedCellText(QStandardItem *item, const QString &fullText,
 
     const QTableView *view = nullptr;
     if (const auto *scopeWidget = qobject_cast<const QWidget *>(scope)) {
-        view = scopeWidget->findChild<const QTableView *>(QLatin1StringView(viewName));
+        view = scopeWidget->findChild<const QTableView *>(QLatin1String(viewName));
     }
 
     const QFontMetrics fm(view ? view->font() : QApplication::font());
@@ -311,6 +311,7 @@ void StationManagementModel::populateStations(const QJsonArray &stations)
         QStandardItem *rateItem = new QStandardItem(
             QStringLiteral("%1%").arg(QString::number(availRate, 'f', 1)));
         rateItem->setTextAlignment(Qt::AlignCenter);
+        rateItem->setData(availRate, OnlineRateRole);
         // 状态列：1=正常运营/营业中（绿） 2=暂停营业/下线（橙），原始值存 StatusRole
         const bool offline = (status == 2);
         QStandardItem *stItem = new QStandardItem(

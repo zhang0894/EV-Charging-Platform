@@ -10,6 +10,7 @@
 
 class QDialog;
 class QTabWidget;
+class OnlineRateDelegate;  // 前向声明：可用率列自绘代理（定义于 .cpp）
 class QTableWidget;
 class QTableView;
 class QLineEdit;
@@ -50,6 +51,9 @@ public:
      * 内部转发给 StationManagementModel::setAuthToken()，随后查询第 1 页。
      */
     void setAuthToken(const QString &token);
+
+    /** 应用浅色/深色主题（由 MainWindow 主题切换时调用） */
+    void applyTheme(bool dark);
 
 signals:
     /** 日志转发：Model 的查询/操作事件与失败信息（由 MainWindow 连接 appendLog） */
@@ -113,6 +117,11 @@ private:
     int m_pageSize = 10;   // 每页条数
     int m_total = 0;       // 总记录数
     int m_totalPages = 1;  // 总页数
+
+    // 可用率列自绘代理（用于主题切换时更新文字/轨道颜色）
+    OnlineRateDelegate *m_onlineRateDelegate = nullptr;
+
+    bool m_dark = false;  // 当前是否为深色主题（用于详情弹窗样式）
 };
 
 #endif // STATIONMANAGEMENTWIDGET_H

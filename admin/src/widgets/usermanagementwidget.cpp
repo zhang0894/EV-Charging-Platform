@@ -468,3 +468,59 @@ void UserManagementWidget::showAdjustDialog(int userId, const QString &phone,
 
     m_model->adjustUserWallet(userId, amount, remark);
 }
+
+// ------------- 白天/夜晚主题切换 -------------
+void UserManagementWidget::applyTheme(bool dark)
+{
+    if (!dark) {
+        setStyleSheet(QStringLiteral(
+            "QFrame#userToolbar{background-color:#ffffff;border:1px solid #e8ecf0;border-radius:8px;}"
+            "QLineEdit#userSearchEdit{background-color:#ffffff;color:#1a2332;"
+            "border:1px solid #d9dee5;border-radius:6px;padding:6px 10px;}"
+            "QLineEdit#userSearchEdit:focus{border:1px solid #2b7bff;}"
+            "QComboBox#userStatusCombo{background-color:#ffffff;color:#1a2332;"
+            "border:1px solid #d9dee5;border-radius:6px;padding:6px 12px;}"
+            "QComboBox#userStatusCombo:hover{border:1px solid #2b7bff;}"
+            "QComboBox#userStatusCombo QAbstractItemView{background-color:#ffffff;"
+            "color:#1a2332;selection-background-color:#e8f0fe;selection-color:#1a5cff;}"
+            "QPushButton#btnUserQuery,QPushButton#btnUserRefresh{background-color:#ffffff;"
+            "color:#1a2332;border:1px solid #d9dee5;border-radius:6px;padding:6px 18px;min-width:72px;}"
+            "QPushButton#btnUserQuery:hover,QPushButton#btnUserRefresh:hover{border:1px solid #2b7bff;color:#2b7bff;}"
+            "QTableView#userTable{background-color:#ffffff;alternate-background-color:#f8fafc;"
+            "color:#1a2332;gridline-color:#eef1f5;border:1px solid #e8ecf0;border-radius:8px;"
+            "selection-background-color:#e8f0fe;selection-color:#1a5cff;}"
+            "QTableView#userTable QHeaderView::section{background-color:#f8fafc;color:#4a5a6e;"
+            "border:none;border-bottom:1px solid #e8ecf0;padding:8px;font-weight:600;}"
+            "QTableView#userTable QTableCornerButton::section{background-color:#f8fafc;border:none;}"
+            "QPushButton#btnUserPrev,QPushButton#btnUserNext{background-color:#ffffff;"
+            "color:#1a2332;border:1px solid #d9dee5;border-radius:6px;padding:5px 16px;}"
+            "QPushButton#btnUserPrev:hover:enabled,QPushButton#btnUserNext:hover:enabled{border:1px solid #2b7bff;color:#2b7bff;}"
+            "QPushButton#btnUserPrev:disabled,QPushButton#btnUserNext:disabled{color:#8a9aa8;border-color:#e8ecf0;}"
+            "QLabel#userPageLabel{color:#4a5a6e;font-size:13px;}"));
+    } else {
+        setStyleSheet(QStringLiteral(
+            "QFrame#userToolbar{background-color:#252a33;border:1px solid #3a4050;border-radius:8px;}"
+            "QLineEdit#userSearchEdit{background-color:#2a3040;color:#e8ecf0;"
+            "border:1px solid #3a4050;border-radius:6px;padding:6px 10px;}"
+            "QLineEdit#userSearchEdit:focus{border:1px solid #2b7bff;}"
+            "QComboBox#userStatusCombo{background-color:#2a3040;color:#e8ecf0;"
+            "border:1px solid #3a4050;border-radius:6px;padding:6px 12px;}"
+            "QComboBox#userStatusCombo:hover{border:1px solid #2b7bff;}"
+            "QComboBox#userStatusCombo QAbstractItemView{background-color:#2a3040;"
+            "color:#e8ecf0;selection-background-color:#1e3a5f;selection-color:#4d9bff;}"
+            "QPushButton#btnUserQuery,QPushButton#btnUserRefresh{background-color:#2a3040;"
+            "color:#e8ecf0;border:1px solid #3a4050;border-radius:6px;padding:6px 18px;min-width:72px;}"
+            "QPushButton#btnUserQuery:hover,QPushButton#btnUserRefresh:hover{border:1px solid #2b7bff;color:#4d9bff;}"
+            "QTableView#userTable{background-color:#252a33;alternate-background-color:#2a2f38;"
+            "color:#e8ecf0;gridline-color:#3a4050;border:1px solid #3a4050;border-radius:8px;"
+            "selection-background-color:#1e3a5f;selection-color:#4d9bff;}"
+            "QTableView#userTable QHeaderView::section{background-color:#2a2f38;color:#a0a8b8;"
+            "border:none;border-bottom:1px solid #3a4050;padding:8px;font-weight:600;}"
+            "QTableView#userTable QTableCornerButton::section{background-color:#2a2f38;border:none;}"
+            "QPushButton#btnUserPrev,QPushButton#btnUserNext{background-color:#2a3040;"
+            "color:#e8ecf0;border:1px solid #3a4050;border-radius:6px;padding:5px 16px;}"
+            "QPushButton#btnUserPrev:hover:enabled,QPushButton#btnUserNext:hover:enabled{border:1px solid #2b7bff;color:#4d9bff;}"
+            "QPushButton#btnUserPrev:disabled,QPushButton#btnUserNext:disabled{color:#7a8290;border-color:#3a4050;}"
+            "QLabel#userPageLabel{color:#a0a8b8;font-size:13px;}"));
+    }
+}

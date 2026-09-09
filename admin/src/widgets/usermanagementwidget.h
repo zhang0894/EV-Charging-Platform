@@ -43,6 +43,9 @@ public:
      */
     void setAuthToken(const QString &token);
 
+    /** 应用浅色/深色主题（由 MainWindow 主题切换时调用） */
+    void applyTheme(bool dark);
+
 signals:
     /**
      * @brief 跨页跳转请求：查看某用户的订单（由"查看订单"按钮触发）
