@@ -27,10 +27,10 @@ LoginDialog::LoginDialog(QWidget *parent)
     setFixedSize(380, 200);
 
     // 预填默认账号（仅为输入便利，校验完全由服务器决定）
-    m_accountEdit->setText(QStringLiteral("admin"));
+//    m_accountEdit->setText(QStringLiteral("admin"));
     m_accountEdit->setPlaceholderText(QStringLiteral("请输入账号"));
 
-    m_passwordEdit->setText(QStringLiteral("123456"));
+//    m_passwordEdit->setText(QStringLiteral("123456"));
     m_passwordEdit->setEchoMode(QLineEdit::Password);
     m_passwordEdit->setPlaceholderText(QStringLiteral("请输入密码"));
 

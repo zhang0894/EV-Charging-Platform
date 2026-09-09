@@ -5,13 +5,14 @@
 #include <QDateTime>
 #include <QDate>
 #include <QLocale>
+#include <limits>
 
 DashboardWidget::DashboardWidget(QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::DashboardWidget)
     , m_model(new DashboardModel(this))
     , m_chart(new QChart)
-    , m_series(new QLineSeries)
+    , m_series(new QSplineSeries)
     , m_axisX(new QDateTimeAxis)
     , m_axisY(new QValueAxis)
 {
@@ -55,6 +56,7 @@ void DashboardWidget::initChart()
     pen.setWidth(2);
     m_series->setPen(pen);
     m_series->setPointsVisible(true);
+    m_series->setMarkerSize(5);
 
     // 图表标题与背景，融入浅色专业风主题
     m_chart->setTitle(QStringLiteral("营收趋势"));
@@ -121,6 +123,7 @@ void DashboardWidget::refreshChart()
     points.reserve(n);
     QDateTime firstDt, lastDt;
     double maxRev = 0.0;
+    double minRev = std::numeric_limits<double>::max();
 
     // 逐行从 Model 读取：日期列 + 营收列（UserRole 存原始数值）
     for (int i = 0; i < n; ++i) {
@@ -139,12 +142,13 @@ void DashboardWidget::refreshChart()
 
         points << QPointF(dt.toMSecsSinceEpoch(), revenue);
         if (revenue > maxRev) maxRev = revenue;
+        if (revenue < minRev) minRev = revenue;
     }
 
     m_series->replace(points);
     m_axisX->setRange(firstDt, lastDt);
-    m_axisY->setRange(0, maxRev * 1.15);
-    m_axisY->applyNiceNumbers();
+    // 纵轴自适应：上界 maxRev*1.15 留出顶部空间，下界 minRev*0.85 放大数据变化趋势
+    m_axisY->setRange(minRev * 0.85, maxRev * 1.15) ;
 }
 
 // ------------- 按钮槽：切换数据集 -------------
