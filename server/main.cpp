@@ -1,4 +1,5 @@
 #include "server/qt_http_server.hpp"
+#include "server/business_thread_pool.hpp"
 #include "db/db_pool.hpp"
 #include "db/db_repository.hpp"
 #include "db/seed_data.hpp"
@@ -66,16 +67,24 @@ int main(int argc, char* argv[]) {
     bool skip_prompt = false;
     bool do_reset_and_import = false;
 
+    int reactor_threads = 0;
+    int business_threads = 24;
+#if defined(_WIN32) || defined(_WIN64)
+    reactor_threads = 12;
+#endif
+
     for (int i = 1; i < argc; ++i) {
         std::string_view arg = argv[i];
         if (arg == "--reset" || arg == "--reseed") {
             do_reset_and_import = true;
             skip_prompt = true;
-            break;
         } else if (arg == "--no-prompt" || arg == "--keep") {
             do_reset_and_import = false;
             skip_prompt = true;
-            break;
+        } else if ((arg == "--reactor-threads" || arg == "--reactors") && i + 1 < argc) {
+            reactor_threads = std::max(1, std::stoi(argv[++i]));
+        } else if ((arg == "--business-threads" || arg == "--business" || arg == "--workers") && i + 1 < argc) {
+            business_threads = std::max(1, std::stoi(argv[++i]));
         }
     }
 
@@ -173,19 +182,18 @@ int main(int argc, char* argv[]) {
         std::println(">>> 5. 启动充电桩动态模拟与占位费引擎 (500ms 刷新周期)...");
         ev::ChargingSimulator::instance().start(500);
 
+        // 5.1 启动业务工作线程池 (解耦 Reactor 事件循环与 DB/业务执行)
+        std::println(">>> 5.1 启动业务工作线程池 ({} 线程并发执行业务与DB任务)...", business_threads);
+        ev::BusinessThreadPool::instance().init(business_threads);
+
         // 6. 绑定并监听 HTTP / WebSocket 端口 8080 (Qt 现代多线程网络引擎)
         ev::QtHttpServer server;
-#if defined(_WIN32) || defined(_WIN64)
-        constexpr int WIN_SERVER_WORKERS = 12;
-        if (!server.start(QString::fromStdString(host), port, WIN_SERVER_WORKERS)) {
-#else
-        if (!server.start(QString::fromStdString(host), port)) {
-#endif
+        if (!server.start(QString::fromStdString(host), port, reactor_threads)) {
             std::cerr << ">>> [FATAL] Qt 网络服务器启动失败，服务端终止启动。\n" << std::flush;
             return 1;
         }
 
-        std::println("\n🚀 服务端启动就绪 [Qt 6.11.0 现代多线程网络引擎 (Scheme 2+)]，监听于: http://{}:{}", host, port);
+        std::println("\n🚀 服务端启动就绪 [Qt 6.11.0 现代多线程网络引擎 (Reactor+Worker解耦架构)]，监听于: http://{}:{}", host, port);
         std::println("📡 WebSocket 实时流通道 (Qt QTcpSocket 驱动):");
         std::println("   - 充电遥测流: ws://{}:{}/ws/v1/charging/<order_id>", host, port);
         std::println("   - 导航监控流: ws://{}:{}/ws/v1/stations/<station_id>/monitor", host, port);
@@ -217,6 +225,7 @@ int main(int argc, char* argv[]) {
 
         ev::ChargingSimulator::instance().stop();
         server.stop();
+        ev::BusinessThreadPool::instance().shutdown();
         ev::AsyncFlowPersister::instance().shutdown();
         ev::DbPool::instance().shutdown();
 

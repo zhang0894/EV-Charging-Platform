@@ -410,6 +410,7 @@ Result<void> DbRepository::update_user_status(int64_t user_id, int status) {
 
     RedisCache::instance().del(std::format("cache:user:model:{}", user_id));
     RedisCache::instance().del(std::format("cache:user:wallet:{}", user_id));
+    RedisCache::instance().del(std::format("cache:wallet:{}", user_id));
     return {};
 }
 
@@ -1249,7 +1250,7 @@ Result<std::optional<OrderModel>> DbRepository::get_active_order_by_user(int64_t
     if (!res.is_ok()) return std::unexpected(AppError::DatabaseError);
     if (res.rows() == 0) {
         std::optional<OrderModel> empty_opt = std::nullopt;
-        RedisCache::instance().set_json(cache_key, empty_opt, 5);
+        RedisCache::instance().set_json(cache_key, empty_opt, 15);
         return empty_opt;
     }
 
@@ -1285,7 +1286,7 @@ Result<std::optional<OrderModel>> DbRepository::get_active_order_by_user(int64_t
     order.updated_at = std::stoll(res.value(0, 28));
 
     std::optional<OrderModel> opt = order;
-    RedisCache::instance().set_json(cache_key, opt, 5);
+    RedisCache::instance().set_json(cache_key, opt, 15);
     return opt;
 }
 
@@ -1395,6 +1396,8 @@ Result<StopChargingResponseData> DbRepository::stop_order(
         conn.exec(p_sql.c_str());
         ChargingStatePool::instance().increment_charge_stats(o_res->pile_id, add_h);
         ChargingStatePool::instance().set_pile_status(o_res->pile_id, "IDLE");
+
+        RedisCache::instance().del(std::format("cache:order:active:{}", o_res->user_id));
 
         return StopChargingResponseData{
             .order_id = std::string(order_id),
@@ -2048,6 +2051,7 @@ Result<ReservePileResponseData> DbRepository::create_reservation(int64_t user_id
         if (!if_res.is_ok()) return std::unexpected(AppError::DatabaseError);
 
         RedisCache::instance().del(std::format("cache:wallet:{}", user_id));
+        RedisCache::instance().del(std::format("cache:reservation:active:{}", user_id));
         RedisCache::instance().del_prefix("cache:dashboard:");
 
         return ReservePileResponseData{
@@ -2068,6 +2072,12 @@ Result<ReservePileResponseData> DbRepository::create_reservation(int64_t user_id
 }
 
 Result<std::optional<ReservationModel>> DbRepository::get_active_reservation_by_user(int64_t user_id) {
+    std::string cache_key = std::format("cache:reservation:active:{}", user_id);
+    auto cached = RedisCache::instance().get_json<std::optional<ReservationModel>>(cache_key);
+    if (cached) {
+        return *cached;
+    }
+
     auto conn = DbPool::instance().acquire_reader();
     if (!conn) return std::unexpected(AppError::DatabaseError);
 
@@ -2079,10 +2089,12 @@ Result<std::optional<ReservationModel>> DbRepository::get_active_reservation_by_
     );
     PgResultGuard res(conn->exec(sql.c_str()));
     if (!res.is_ok() || res.rows() == 0) {
-        return std::optional<ReservationModel>{std::nullopt};
+        std::optional<ReservationModel> empty_opt = std::nullopt;
+        RedisCache::instance().set_json(cache_key, empty_opt, 15);
+        return empty_opt;
     }
 
-    return std::optional<ReservationModel>{ReservationModel{
+    ReservationModel r{
         .reservation_id = res.value(0, 0),
         .user_id = std::stoll(res.value(0, 1)),
         .station_id = std::stoll(res.value(0, 2)),
@@ -2096,7 +2108,11 @@ Result<std::optional<ReservationModel>> DbRepository::get_active_reservation_by_
         .fulfilled_at = std::stoll(res.value(0, 10)),
         .cancelled_at = std::stoll(res.value(0, 11)),
         .updated_at = std::stoll(res.value(0, 12))
-    }};
+    };
+
+    std::optional<ReservationModel> opt = r;
+    RedisCache::instance().set_json(cache_key, opt, 15);
+    return opt;
 }
 
 Result<std::optional<ReservationModel>> DbRepository::get_active_reservation_by_pile(std::string_view pile_id) {
@@ -2201,6 +2217,7 @@ Result<CancelReservationResponseData> DbRepository::cancel_reservation(int64_t u
         conn.exec(insert_flow.c_str());
 
         RedisCache::instance().del(std::format("cache:wallet:{}", user_id));
+        RedisCache::instance().del(std::format("cache:reservation:active:{}", user_id));
         RedisCache::instance().del_prefix("cache:dashboard:");
 
         return CancelReservationResponseData{
@@ -2270,6 +2287,7 @@ Result<void> DbRepository::fulfill_reservation(int64_t user_id, std::string_view
         conn.exec(insert_flow.c_str());
 
         RedisCache::instance().del(std::format("cache:wallet:{}", user_id));
+        RedisCache::instance().del(std::format("cache:reservation:active:{}", user_id));
         RedisCache::instance().del_prefix("cache:dashboard:");
         return {};
     });
@@ -2293,7 +2311,9 @@ Result<std::vector<std::string>> DbRepository::timeout_expired_reservations() {
         for (int i = 0; i < q_res.rows(); ++i) {
             std::string res_id = q_res.value(i, 0);
             std::string pile_id = q_res.value(i, 1);
+            int64_t u_id = std::stoll(q_res.value(i, 2));
             expired_piles.push_back(pile_id);
+            RedisCache::instance().del(std::format("cache:reservation:active:{}", u_id));
 
             // 标记为 TIMEOUT，没收全部押金 (penalty_fee_cents = 2000, refund = 0)
             std::string u_res = std::format(

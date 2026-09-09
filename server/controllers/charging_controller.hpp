@@ -25,8 +25,14 @@ public:
         ActiveOrderCheckResponseData data;
         if (res->has_value()) {
             const auto& ord = res->value();
-            auto st_res = DbRepository::instance().get_station_by_id(ord.station_id);
-            std::string st_name = st_res ? st_res->station_name : "";
+            std::string st_name;
+            const StaticStation* static_st = find_static_station(static_cast<int32_t>(ord.station_id));
+            if (static_st) {
+                st_name = static_st->name;
+            } else {
+                auto st_res = DbRepository::instance().get_station_by_id(ord.station_id);
+                st_name = st_res ? st_res->station_name : "";
+            }
 
             auto pile_st = ChargingStatePool::instance().get_pile_state(ord.pile_id);
             int soc = pile_st ? pile_st->current_soc : ord.start_soc;

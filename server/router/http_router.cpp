@@ -19,6 +19,30 @@ std::string_view HttpRouter::extract_path_only(std::string_view target) {
     return target;
 }
 
+bool HttpRouter::is_fast_path(const http::request<http::string_body>& req) {
+    if (req.method() == http::verb::options) return true;
+    if (req.method() != http::verb::get) return false;
+
+    std::string_view target = req.target();
+    std::string_view path = extract_path_only(target);
+
+    // 1. 空间找桩 (R-Tree 空间几何索引 + 编译期常量表，0 次查库)
+    if (path == "/api/v1/stations/inquire") return true;
+
+    // 2. 电桩实时状态列表 (ChargingStatePool 纯内存状态池)
+    if (path == "/api/v1/piles") return true;
+
+    // 3. 单站静态卡片详情 (STATIC_STATIONS 数组直接索引)
+    if (path.starts_with("/api/v1/stations/")) {
+        std::string_view sub = path.substr(17);
+        if (!sub.empty() && sub.find('/') == std::string_view::npos) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static std::string url_decode_string(std::string_view in) {
     std::string out;
     out.reserve(in.size());

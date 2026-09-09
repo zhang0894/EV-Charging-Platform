@@ -25,6 +25,9 @@ public:
     // 路径切片与路径变量提取
     static std::string_view extract_path_only(std::string_view target);
 
+    // 判定请求是否属于纯内存、无锁、无阻塞数据库操作的快路径 (直接由 Reactor 线程毫秒级响应)
+    static bool is_fast_path(const http::request<http::string_body>& req);
+
 private:
     HttpRouter() = default;
 };

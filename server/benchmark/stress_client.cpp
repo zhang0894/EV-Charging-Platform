@@ -1250,9 +1250,6 @@ int main(int argc, char* argv[]) {
         if (tiers.size() == 4 && tiers[0] == 128) {
             tiers = {32, 64, 128, 256, 512, 1024};
         }
-        if (duration_sec == 30) {
-            duration_sec = 60; // 用户要求每轮增长到 1 分钟
-        }
         if (output_file == "benchmark_results_raw.md") {
             output_file = "client_mix_results.md";
         }

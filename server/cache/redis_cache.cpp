@@ -192,20 +192,22 @@ bool RedisCache::set(std::string_view key, std::string_view value, int ttl_secon
         };
     }
 
-    // 2. 尝试向 Redis 写入
-    std::lock_guard<std::mutex> r_lock(redis_mutex_);
-    if (check_and_reconnect()) {
-        std::string cmd;
-        if (ttl_seconds > 0) {
-            cmd = std::format("*5\r\n$3\r\nSET\r\n${}\r\n{}\r\n${}\r\n{}\r\n$2\r\nEX\r\n${}\r\n{}\r\n",
-                              key.size(), key, value.size(), value,
-                              std::to_string(ttl_seconds).size(), ttl_seconds);
-        } else {
-            cmd = std::format("*3\r\n$3\r\nSET\r\n${}\r\n{}\r\n${}\r\n{}\r\n",
-                              key.size(), key, value.size(), value);
+    // 2. 尝试向 Redis 写入 (若在线)
+    if (is_redis_online_) {
+        std::lock_guard<std::mutex> r_lock(redis_mutex_);
+        if (check_and_reconnect()) {
+            std::string cmd;
+            if (ttl_seconds > 0) {
+                cmd = std::format("*5\r\n$3\r\nSET\r\n${}\r\n{}\r\n${}\r\n{}\r\n$2\r\nEX\r\n${}\r\n{}\r\n",
+                                  key.size(), key, value.size(), value,
+                                  std::to_string(ttl_seconds).size(), ttl_seconds);
+            } else {
+                cmd = std::format("*3\r\n$3\r\nSET\r\n${}\r\n{}\r\n${}\r\n{}\r\n",
+                                  key.size(), key, value.size(), value);
+            }
+            std::string resp;
+            execute_redis_cmd(cmd, &resp);
         }
-        std::string resp;
-        execute_redis_cmd(cmd, &resp);
     }
 
     return true;
@@ -215,24 +217,22 @@ std::optional<std::string> RedisCache::get(std::string_view key) {
     int64_t now = current_time_ms();
 
     // 1. 若 Redis 在线，优先从 Redis 读取
-    {
+    if (is_redis_online_) {
         std::lock_guard<std::mutex> r_lock(redis_mutex_);
-        if (is_redis_online_ || (now - last_reconnect_attempt_ms_ >= 5000)) {
-            if (check_and_reconnect()) {
-                std::string cmd = std::format("*2\r\n$3\r\nGET\r\n${}\r\n{}\r\n", key.size(), key);
-                std::string resp;
-                if (execute_redis_cmd(cmd, &resp)) {
-                    // RESP bulk string 解析: $len\r\ndata\r\n 或 $-1\r\n
-                    if (resp.starts_with("$-1")) {
-                        return std::nullopt; // Key 不存在
-                    } else if (resp.starts_with("$")) {
-                        size_t first_crlf = resp.find("\r\n");
-                        if (first_crlf != std::string::npos) {
-                            int len = std::atoi(resp.substr(1, first_crlf - 1).c_str());
-                            if (len >= 0 && resp.size() >= first_crlf + 2 + len) {
-                                std::string val = resp.substr(first_crlf + 2, len);
-                                return val;
-                            }
+        if (is_redis_online_) {
+            std::string cmd = std::format("*2\r\n$3\r\nGET\r\n${}\r\n{}\r\n", key.size(), key);
+            std::string resp;
+            if (execute_redis_cmd(cmd, &resp)) {
+                // RESP bulk string 解析: $len\r\ndata\r\n 或 $-1\r\n
+                if (resp.starts_with("$-1")) {
+                    return std::nullopt; // Key 不存在
+                } else if (resp.starts_with("$")) {
+                    size_t first_crlf = resp.find("\r\n");
+                    if (first_crlf != std::string::npos) {
+                        int len = std::atoi(resp.substr(1, first_crlf - 1).c_str());
+                        if (len >= 0 && resp.size() >= first_crlf + 2 + len) {
+                            std::string val = resp.substr(first_crlf + 2, len);
+                            return val;
                         }
                     }
                 }
@@ -240,7 +240,7 @@ std::optional<std::string> RedisCache::get(std::string_view key) {
         }
     }
 
-    // 2. 从本地缓存获取
+    // 2. 从本地高性能内存缓存获取 (读写锁并发 shared_lock，极速无锁争用)
     std::shared_lock<std::shared_mutex> lock(local_mutex_);
     auto it = local_cache_.find(std::string(key));
     if (it != local_cache_.end()) {
@@ -259,12 +259,14 @@ bool RedisCache::del(std::string_view key) {
         local_cache_.erase(std::string(key));
     }
 
-    // 删除 Redis
-    std::lock_guard<std::mutex> r_lock(redis_mutex_);
-    if (check_and_reconnect()) {
-        std::string cmd = std::format("*2\r\n$3\r\nDEL\r\n${}\r\n{}\r\n", key.size(), key);
-        std::string resp;
-        execute_redis_cmd(cmd, &resp);
+    // 删除 Redis (若在线)
+    if (is_redis_online_) {
+        std::lock_guard<std::mutex> r_lock(redis_mutex_);
+        if (check_and_reconnect()) {
+            std::string cmd = std::format("*2\r\n$3\r\nDEL\r\n${}\r\n{}\r\n", key.size(), key);
+            std::string resp;
+            execute_redis_cmd(cmd, &resp);
+        }
     }
     return true;
 }
@@ -282,16 +284,18 @@ void RedisCache::del_prefix(std::string_view prefix) {
         }
     }
 
-    // 删除 Redis (通过 KEYS / DEL)
-    std::lock_guard<std::mutex> r_lock(redis_mutex_);
-    if (check_and_reconnect()) {
-        std::string cmd = std::format("*2\r\n$4\r\nKEYS\r\n${}\r\n{}*\r\n", prefix.size() + 1, prefix);
-        std::string resp;
-        // 如果是开发或压测，执行简单删除
-        if (execute_redis_cmd(cmd, &resp) && resp.starts_with("*")) {
-            // 解析数组中的键并批量删除
-            std::string del_cmd = std::format("*2\r\n$3\r\nDEL\r\n${}\r\n{}summary\r\n", prefix.size() + 7, prefix);
-            execute_redis_cmd(del_cmd, nullptr);
+    // 删除 Redis (通过 KEYS / DEL) (若在线)
+    if (is_redis_online_) {
+        std::lock_guard<std::mutex> r_lock(redis_mutex_);
+        if (check_and_reconnect()) {
+            std::string cmd = std::format("*2\r\n$4\r\nKEYS\r\n${}\r\n{}*\r\n", prefix.size() + 1, prefix);
+            std::string resp;
+            // 如果是开发或压测，执行简单删除
+            if (execute_redis_cmd(cmd, &resp) && resp.starts_with("*")) {
+                // 解析数组中的键并批量删除
+                std::string del_cmd = std::format("*2\r\n$3\r\nDEL\r\n${}\r\n{}summary\r\n", prefix.size() + 7, prefix);
+                execute_redis_cmd(del_cmd, nullptr);
+            }
         }
     }
 }
@@ -303,9 +307,11 @@ bool RedisCache::flush_all() {
         local_cache_.clear();
     }
     // 2. 清空 Redis (若在线)
-    std::lock_guard<std::mutex> r_lock(redis_mutex_);
-    if (check_and_reconnect()) {
-        execute_redis_cmd("*1\r\n$8\r\nFLUSHALL\r\n", nullptr);
+    if (is_redis_online_) {
+        std::lock_guard<std::mutex> r_lock(redis_mutex_);
+        if (check_and_reconnect()) {
+            execute_redis_cmd("*1\r\n$8\r\nFLUSHALL\r\n", nullptr);
+        }
     }
     return true;
 }
