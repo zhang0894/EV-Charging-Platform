@@ -1,0 +1,7 @@
+<RCC>
+    <qresource prefix="/assets">
+        <file>assets/default.jpeg</file>
+        <file alias="marker-online.svg">assets/marker-online.svg</file>
+        <file alias="marker-offline.svg">assets/marker-offline.svg</file>
+    </qresource>
+</RCC>
