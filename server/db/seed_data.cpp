@@ -335,7 +335,7 @@ bool SeedDataGenerator::import_from_json(const std::string& data_dir) {
                 int second = static_cast<int>((ord_seed / 1440) % 60);
                 int64_t start_time = day_start_ms + (hour * 3600LL + minute * 60LL + second) * 1000LL;
                 int dur_mins = is_fast ? (30 + static_cast<int>(ord_seed % 45)) : (120 + static_cast<int>(ord_seed % 240));
-                int64_t end_time = std::min(day_end_ms, start_time + dur_mins * 60 * 1000LL);
+                int64_t end_time = std::min<int64_t>(day_end_ms, start_time + dur_mins * 60 * 1000LL);
 
                 int start_soc = 15 + static_cast<int>(ord_seed % 25);
                 int end_soc = 85 + static_cast<int>(ord_seed % 15);
