@@ -220,11 +220,12 @@ DbPool::PooledConnection DbPool::acquire_from_subpool(
         return nullptr;
     }
 
-    // 1. 若当前空闲池为空，但未达到最大连接数配额：立即动态扩容创建新连接，零等待！
+    // 1. 若当前空闲池为空，但未达到最大连接数配额：动态扩容创建新连接
     if (subpool.pool.empty() && subpool.total_connections < subpool.max_connections) {
+        subpool.total_connections++;
+        lock.unlock(); // 释放锁以允许其他线程并发归还或操作，避免 TCP 握手期间阻塞整个连接池
         auto conn = std::make_unique<DbConnection>(subpool.conninfo);
         if (conn->is_valid()) {
-            subpool.total_connections++;
             auto raw_ptr = conn.release();
             return PooledConnection(
                 raw_ptr,
@@ -240,12 +241,15 @@ DbPool::PooledConnection DbPool::acquire_from_subpool(
                     }
                 }
             );
+        } else {
+            lock.lock();
+            if (subpool.total_connections > 0) subpool.total_connections--;
         }
     }
 
     // 2. 若当前已达最大连接数且无空闲连接：进入排队等待可用连接
     if (subpool.pool.empty()) {
-        auto wait_timeout = std::min(timeout, std::chrono::milliseconds(200));
+        auto wait_timeout = std::min(timeout, std::chrono::milliseconds(1500));
         bool acquired = subpool.cv.wait_for(lock, wait_timeout, [&subpool]() {
             return !subpool.pool.empty() || subpool.is_shutdown;
         });

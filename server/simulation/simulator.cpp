@@ -17,7 +17,7 @@ void ChargingSimulator::start(boost::asio::io_context& ioc, int interval_ms) {
     timer_ = std::make_unique<boost::asio::steady_timer>(*ioc_);
 
     schedule_tick();
-    std::cout << "[Simulator] Dynamic pile simulation engine started (Asio Mode).\n";
+    std::cout << "[Simulator] Dynamic pile simulation engine started (Asio Mode, " << CHARGING_SPEED_MULTIPLIER << "x Speed).\n";
 }
 
 void ChargingSimulator::start(int interval_ms) {
@@ -26,7 +26,7 @@ void ChargingSimulator::start(int interval_ms) {
     interval_ms_ = interval_ms;
     is_running_ = true;
     worker_thread_ = std::thread([this, interval_ms]() {
-        std::cout << "[Simulator] Dynamic pile simulation engine started (Thread Mode).\n";
+        std::cout << "[Simulator] Dynamic pile simulation engine started (Thread Mode, " << CHARGING_SPEED_MULTIPLIER << "x Speed).\n";
         while (is_running_) {
             std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
             if (!is_running_) break;
@@ -144,17 +144,19 @@ void ChargingSimulator::step_once(double delta_seconds) {
                 pile.power_kw = pile.max_power_kw;
             }
 
-            // 电量增量
-            double delta_kwh = pile.power_kw * (delta_seconds / 3600.0);
+            // 电量增量 (加速 60 倍模拟，便于演示快速充电与结算)
+            double effective_delta_seconds = delta_seconds * CHARGING_SPEED_MULTIPLIER;
+            double delta_kwh = pile.power_kw * (effective_delta_seconds / 3600.0);
             pile.charged_energy_kwh += delta_kwh;
 
             // SOC 增长 (模拟60度电池包)
             constexpr double BATTERY_CAPACITY_KWH = 60.0;
             int soc_inc = static_cast<int>((pile.charged_energy_kwh / BATTERY_CAPACITY_KWH) * 100.0);
             int new_soc = std::min(100, (pile.is_simulated ? pile.current_soc : 20) + (pile.is_simulated ? (soc_inc > 0 ? 1 : 0) : soc_inc));
-            if (pile.is_simulated && delta_seconds > 0) {
-                // 模拟车辆缓慢递增 SOC
-                pile.current_soc = std::min(100, pile.current_soc + (delta_seconds >= 1.0 ? 1 : 0));
+            if (pile.is_simulated) {
+                // 背景模拟车流：按充入电量加速递增 SOC，充满后触发自动腾退
+                int soc_step = static_cast<int>((delta_kwh / BATTERY_CAPACITY_KWH) * 100.0);
+                pile.current_soc = std::min(100, pile.current_soc + std::max(1, soc_step));
             } else {
                 pile.current_soc = new_soc;
             }

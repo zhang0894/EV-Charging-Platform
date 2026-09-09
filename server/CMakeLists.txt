@@ -141,6 +141,8 @@ if (WIN32)
             /EHsc
             /Zc:__cplusplus
             /O2
+            /fp:fast
+            /arch:AVX2
         )
 
         target_link_libraries(server PRIVATE
@@ -225,19 +227,38 @@ if (ENABLE_BENCHMARK)
             WIN32_LEAN_AND_MEAN
             NOMINMAX
         )
-        if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        if (MSVC)
             target_compile_options(stress_client PRIVATE
-                -Wa,-mbig-obj
-                -O2
+                /std:c++latest
+                /utf-8
+                /bigobj
+                /EHsc
+                /Zc:__cplusplus
+                /O2
+                /fp:fast
+                /arch:AVX2
+            )
+            target_link_libraries(stress_client PRIVATE
+                Threads::Threads
+                ws2_32
+                mswsock
+                psapi
+            )
+        else()
+            if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+                target_compile_options(stress_client PRIVATE
+                    -Wa,-mbig-obj
+                    -O2
+                )
+            endif()
+            target_link_libraries(stress_client PRIVATE
+                Threads::Threads
+                ws2_32
+                mswsock
+                stdc++exp
+                psapi
             )
         endif()
-        target_link_libraries(stress_client PRIVATE
-            Threads::Threads
-            ws2_32
-            mswsock
-            stdc++exp
-            psapi
-        )
     else()
         target_compile_options(stress_client PRIVATE
             -O2

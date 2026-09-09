@@ -2485,11 +2485,18 @@ void DbRepository::check_and_simulate_daily_orders() {
     int64_t cst_offset = 8 * 3600 * 1000LL;
     int64_t current_day = (now + cst_offset) / 86400000LL;
 
+    static std::atomic<int64_t> cached_last_day{0};
+    if (cached_last_day.load(std::memory_order_relaxed) >= current_day) {
+        return;
+    }
+
     int64_t last_day = get_platform_metric("last_simulated_day", 0);
     if (last_day == 0) {
         set_platform_metric("last_simulated_day", current_day);
+        cached_last_day.store(current_day, std::memory_order_relaxed);
         return;
     }
+    cached_last_day.store(last_day, std::memory_order_relaxed);
 
     if (current_day > last_day) {
         std::cout << "[Simulator] >>> Detected day transition: last_simulated_day=" << last_day 
@@ -2501,6 +2508,7 @@ void DbRepository::check_and_simulate_daily_orders() {
 
         prune_orders_older_than_30_days();
         set_platform_metric("last_simulated_day", current_day);
+        cached_last_day.store(current_day, std::memory_order_relaxed);
 
         RedisCache::instance().del_prefix("cache:dashboard:");
         RedisCache::instance().del_prefix("cache:station:");
